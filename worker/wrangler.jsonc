@@ -1,0 +1,14 @@
+{
+  "name": "linkscout-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "CF_ACCOUNT_ID": "<your-account-id>"
+  }
+  // Secrets (wrangler secret put …, or .dev.vars locally):
+  //   CF_API_TOKEN      – token with "Browser Rendering - Edit"
+  //   TYPESAFE_API_KEY  – TypeSafe / Jev key
+  //   LINKSCOUT_TOKEN   – shared secret the extension sends
+  //   JINA_API_KEY      – optional, Jina Reader fallback (higher rate limit)
+}

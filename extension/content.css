@@ -1,0 +1,9 @@
+.linkscout { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; font: 12px/1.4 system-ui, sans-serif; }
+.ls-badge { padding: 1px 6px; border-radius: 9px; font-weight: 600; }
+.ls-high { background: #1e8e3e; color: #fff; }
+.ls-mid { background: #f9ab00; color: #202124; }
+.ls-low { background: #9aa0a6; color: #fff; }
+.ls-cat { background: #e8eaed; color: #3c4043; font-weight: 500; }
+.ls-spam { background: #d93025; color: #fff; }
+.ls-loading, .ls-error { background: #e8eaed; color: #5f6368; }
+.ls-passage { flex-basis: 100%; margin: 2px 0 0; padding: 4px 8px; border-left: 3px solid #1a73e8; color: #3c4043; background: #f8f9fa; }

@@ -1,0 +1,10 @@
+{
+  "name": "linkscout",
+  "private": true,
+  "workspaces": ["worker"],
+  "scripts": {
+    "dev": "npm run dev -w worker",
+    "deploy": "npm run deploy -w worker",
+    "typecheck": "npm run typecheck -w worker"
+  }
+}

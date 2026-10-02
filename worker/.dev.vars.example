@@ -1,0 +1,5 @@
+CF_API_TOKEN=
+TYPESAFE_API_KEY=
+LINKSCOUT_TOKEN=dev-token
+# Optional: higher Jina Reader rate limit for the fallback fetcher
+JINA_API_KEY=
