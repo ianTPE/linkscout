@@ -1,8 +1,12 @@
 {
   "name": "linkscout",
   "private": true,
-  "workspaces": ["worker"],
+  "workspaces": [
+    "worker"
+  ],
   "scripts": {
+    "env:sync": "node scripts/sync-dev-vars.mjs",
+    "predev": "npm run env:sync",
     "dev": "npm run dev -w worker",
     "deploy": "npm run deploy -w worker",
     "typecheck": "npm run typecheck -w worker"

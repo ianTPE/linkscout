@@ -1,3 +1,7 @@
+# Generated into worker/.dev.vars from the root .env by `npm run env:sync`.
+# Add a key here to have it synced; the value here is the default when .env lacks it.
+CF_ACCOUNT_ID=
+# In .env this may also be named CF_API_KEY
 CF_API_TOKEN=
 TYPESAFE_API_KEY=
 LINKSCOUT_TOKEN=dev-token

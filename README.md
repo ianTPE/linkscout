@@ -22,10 +22,11 @@ Search page (extension)  ──urls+query──▶  Worker /score
 1. **Worker**
    ```sh
    npm install
-   cp worker/.dev.vars.example worker/.dev.vars   # fill in CF_API_TOKEN, TYPESAFE_API_KEY
-   # set CF_ACCOUNT_ID in worker/wrangler.jsonc
-   npm run dev                                    # http://localhost:8787
+   # Put keys in the root .env: CF_ACCOUNT_ID, CF_API_TOKEN (or CF_API_KEY),
+   # TYPESAFE_API_KEY, and optionally JINA_API_KEY
+   npm run dev        # syncs .env → worker/.dev.vars first, then http://localhost:8787
    ```
+   `npm run env:sync` regenerates `worker/.dev.vars` on its own. Only the keys listed in `worker/.dev.vars.example` are copied; to sync a new key, add it there.
    `CF_API_TOKEN` needs the **Browser Rendering - Edit** permission. `JINA_API_KEY` is optional: without it the Jina fallback still works, just with a lower rate limit.
 
 2. **Test it on its own**
