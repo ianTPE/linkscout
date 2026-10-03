@@ -24,6 +24,14 @@ const param = (name) => () => new URLSearchParams(location.search).get(name);
 // story blocks of four cards in a 2×2 grid, which sorting inside would collapse, so the
 // blocks move as units.
 const isGoogleNews = () => param("tbm")() === "nws";
+
+// Panel row for a search result: the link can also hold the site name, breadcrumbs or a
+// snippet, so the heading alone is the title, with the site's domain under it.
+const searchMeta = (a, url) => ({
+  title: (a.querySelector('h2, h3, [role="heading"]') ?? a).textContent.trim(),
+  sub: new URL(url).hostname.replace(/^www\./, ""),
+});
+
 const GOOGLE = {
   query: param("q"),
   links: () => (isGoogleNews() ? '#search a:has([role="heading"])' : "#search a:has(h3)"),
@@ -31,11 +39,7 @@ const GOOGLE = {
   news: isGoogleNews,
   content: fetchArticle,
   panel: true,
-  // The link also holds the site name and breadcrumbs; the heading alone is the title.
-  meta: (a, url) => ({
-    title: (a.querySelector('h3, [role="heading"]') ?? a).textContent.trim(),
-    sub: new URL(url).hostname.replace(/^www\./, ""),
-  }),
+  meta: searchMeta,
 };
 
 const ENGINES = {
@@ -47,6 +51,8 @@ const ENGINES = {
     links: () => (location.pathname.startsWith("/news/") ? "#algocore .news-card a.title" : "#b_results li.b_algo h2 a"),
     news: () => location.pathname.startsWith("/news/"),
     content: fetchArticle,
+    panel: true,
+    meta: searchMeta,
   },
   "duckduckgo.com": {
     query: param("q"),
@@ -57,6 +63,8 @@ const ENGINES = {
         : 'a[data-testid="result-title-a"]',
     news: () => param("ia")() === "news",
     content: fetchArticle,
+    panel: true,
+    meta: searchMeta,
   },
   "www.104.com.tw": {
     query: query104,
