@@ -9,6 +9,9 @@
 //                  that block Browser Run / Jina; returns { title, markdown } or null
 //   mode           optional: "job" scores results as job postings
 //   reorder        optional: false (or a function returning false) where results must keep the site's order
+//   panel          optional: true shows a side panel ranking every scored result, for sites
+//                  that can't be reordered in place
+//   meta(a)        optional: { title, sub } for a result's panel row; default is the link text
 //   keepGroups     optional: true (or a function) to sort a block of several results as one unit,
 //                  by its best score, without touching its inside
 
@@ -49,8 +52,13 @@ const ENGINES = {
     canonical: (u) => u.origin + u.pathname, // drop ?jobsource=…
     content: fetch104Job,
     // 104's list is virtual: ~22 elements are recycled for whichever jobs are on screen,
-    // so sorting them would shuffle jobs around while scrolling.
+    // so sorting them would shuffle jobs around while scrolling. The panel ranks them instead.
     reorder: false,
+    panel: true,
+    meta: (a) => ({
+      title: a.textContent.trim(),
+      sub: a.closest(".info-container")?.querySelector('a[href*="/company/"]')?.textContent.trim() ?? "",
+    }),
     mode: "job", // score as job postings against the profile from the options page
   },
 };
@@ -263,6 +271,7 @@ const linkSelector = () => (typeof engine.links === "function" ? engine.links() 
 const keepGroups = () => (typeof engine.keepGroups === "function" ? engine.keepGroups() : !!engine.keepGroups);
 const canReorder = () => (typeof engine.reorder === "function" ? engine.reorder() : engine.reorder !== false);
 const results = new Map(); // url -> result, or { loading: true } while in flight
+const meta = new Map(); // url -> { title, sub } for the ranking panel
 // anchor -> url its box shows. Not a plain "seen" set: 104's virtual list reuses the same
 // anchor elements for different jobs as you scroll, so an anchor must follow its current URL.
 const shown = new WeakMap();
@@ -295,6 +304,7 @@ function scan() {
     const url = realUrl(a);
     if (!url || !/^https?:/.test(url) || shown.get(a) === url) continue;
     shown.set(a, url);
+    if (!meta.has(url)) meta.set(url, engine.meta ? engine.meta(a) : { title: a.textContent.trim(), sub: "" });
     if (!results.has(url)) {
       results.set(url, { loading: true });
       pending.add(url);
@@ -309,6 +319,7 @@ function render(url) {
   for (const a of document.querySelectorAll(linkSelector())) {
     if (shown.get(a) === url) mount(a, results.get(url));
   }
+  schedulePanel();
 }
 
 async function flush() {
@@ -659,6 +670,98 @@ function showToast(moved) {
     applyOrder();
   };
   toast.replaceChildren(text, button);
+}
+
+// ---------------------------------------------------------------------------
+// Ranking panel, for sites whose list can't be reordered in place (104's virtual list).
+// It lists every result scored so far, best first, and never touches the site's own list.
+// ---------------------------------------------------------------------------
+
+let panel = null;
+let panelQueued = false;
+let panelCollapsed = false;
+
+function schedulePanel() {
+  if (!engine?.panel || panelQueued) return;
+  panelQueued = true;
+  requestAnimationFrame(() => {
+    panelQueued = false;
+    drawPanel();
+  });
+}
+
+function drawPanel() {
+  if (!panel) {
+    panel = document.createElement("div");
+    panel.className = "ls-panel";
+    document.body.append(panel);
+    chrome.storage.local.get({ panelCollapsed: false }).then((v) => {
+      panelCollapsed = v.panelCollapsed;
+      drawPanel();
+    });
+  }
+  const all = [...results].map(([url, r]) => ({ url, r, m: meta.get(url) ?? { title: url, sub: "" } }));
+  const byScore = (a, b) => b.r.score - a.r.score;
+  const ranked = all.filter((e) => typeof e.r.score === "number" && !e.r.screened).sort(byScore);
+  const screened = all.filter((e) => e.r.screened).sort(byScore);
+  const loading = all.filter((e) => e.r.loading).length;
+  const failed = all.filter((e) => e.r.error).length;
+
+  const head = document.createElement("button");
+  head.className = "ls-panel-head";
+  head.textContent = `${panelCollapsed ? "▸" : "▾"} LinkScout 排行（${ranked.length}${loading ? `，評分中 ${loading}` : ""}）`;
+  head.onclick = () => {
+    panelCollapsed = !panelCollapsed;
+    chrome.storage.local.set({ panelCollapsed });
+    drawPanel();
+  };
+  panel.classList.toggle("ls-collapsed", panelCollapsed);
+  if (panelCollapsed) return panel.replaceChildren(head);
+
+  const list = document.createElement("div");
+  list.className = "ls-panel-list";
+  for (const e of [...ranked, ...screened]) list.append(panelRow(e));
+  if (!ranked.length && !screened.length) list.append(panelNote(loading ? "評分中…" : "還沒有評分結果"));
+
+  const notes = [
+    screened.length && `初篩略過 ${screened.length} 筆（列在最後）`,
+    failed && `無法讀取 ${failed} 筆`,
+    "只包含捲動時出現過的職缺；往下捲會繼續加入。",
+  ].filter(Boolean);
+  panel.replaceChildren(head, list, panelNote(notes.join(" · ")));
+}
+
+function panelRow({ url, r, m }) {
+  const row = document.createElement("a");
+  row.className = "ls-panel-row";
+  row.href = url;
+  row.target = "_blank";
+  row.rel = "noopener";
+  const tier = r.screened ? "ls-muted" : r.score >= 70 ? "ls-high" : r.score >= 40 ? "ls-mid" : "ls-low";
+  const text = document.createElement("span");
+  text.className = "ls-panel-text";
+  const title = document.createElement("span");
+  title.className = "ls-panel-title";
+  title.textContent = m.title;
+  text.append(title);
+  if (m.sub) {
+    const sub = document.createElement("span");
+    sub.className = "ls-panel-sub";
+    sub.textContent = m.sub;
+    text.append(sub);
+  }
+  row.append(badge(String(r.score), tier), text);
+  const toneClass = { warn: "ls-warn", good: "ls-good", muted: "ls-muted" };
+  if (r.flag) row.append(badge(r.flag.label, toneClass[r.flag.tone] ?? "ls-good"));
+  if (r.keyPassage) row.title = r.keyPassage;
+  return row;
+}
+
+function panelNote(text) {
+  const p = document.createElement("div");
+  p.className = "ls-panel-note";
+  p.textContent = text;
+  return p;
 }
 
 scan();
