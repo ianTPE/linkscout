@@ -15,12 +15,27 @@ const ENGINES = {
   "www.bing.com": { query: param("q"), links: "#b_results li.b_algo h2 a" },
   "duckduckgo.com": { query: param("q"), links: 'a[data-testid="result-title-a"]' },
   "www.104.com.tw": {
-    query: param("keyword"),
+    query: query104,
     links: 'h2 a[href*="/job/"]',
     canonical: (u) => u.origin + u.pathname, // drop ?jobsource=…
     content: fetch104Job,
   },
 };
+
+/**
+ * 104 rewrites the page title to describe every active filter, e.g.
+ * "「軟體／工程類人員」台北市、新北市找可以在家上班的遠端工作職缺｜2026年10月－104人力銀行",
+ * so area-only or category-only searches still have a query. Until the page sets it,
+ * the title is the generic "最新找工作職缺－104人力銀行"; then fall back to ?keyword=.
+ */
+function query104() {
+  const t = document.title
+    .split(/[｜|]/)[0]
+    .replace(/－104人力銀行$/, "")
+    .replace("最新找工作", "找工作")
+    .trim();
+  return t && t !== "找工作職缺" ? t : param("keyword")();
+}
 
 /**
  * 104 job pages sit behind a Cloudflare challenge that Browser Run and Jina often fail.
@@ -36,26 +51,38 @@ async function fetch104Job(url) {
   const job = d.jobDetail;
   const cond = d.condition ?? {};
   const names = (xs) => (xs ?? []).map((x) => x.description).filter(Boolean).join("、");
+  // Facts go in tables: Jev still reads them, but they're not offered as the key passage
+  // (the 104 result list already shows company, salary and location).
+  const table = (rows) => {
+    const filled = rows.filter(([, v]) => v);
+    if (!filled.length) return [];
+    const cell = (v) => String(v).replace(/\|/g, "／").replace(/\s*\n\s*/g, " ");
+    return ["| 項目 | 內容 |", "| --- | --- |", ...filled.map(([k, v]) => `| ${k} | ${cell(v)} |`)];
+  };
   const lines = [
     `# ${d.header?.jobName ?? ""}`,
     "",
-    `公司：${d.header?.custName ?? ""}`,
-    `薪資：${job.salary ?? ""}`,
-    `地點：${job.addressRegion ?? ""}${job.addressDetail ?? ""}`,
-    `職務類別：${names(job.jobCategory)}`,
-    job.remoteWork?.description ? `遠端：${job.remoteWork.description}` : null,
+    ...table([
+      ["公司", d.header?.custName],
+      ["薪資", job.salary],
+      ["地點", `${job.addressRegion ?? ""}${job.addressDetail ?? ""}`],
+      ["職務類別", names(job.jobCategory)],
+      ["遠端", job.remoteWork?.description],
+    ]),
     "", "## 工作內容", "", job.jobDescription ?? "",
     "", "## 條件要求", "",
-    `工作經歷：${cond.workExp ?? ""}`,
-    `學歷：${cond.edu ?? ""}`,
-    `擅長工具：${names(cond.specialty)}`,
-    `工作技能：${names(cond.skill)}`,
+    ...table([
+      ["工作經歷", cond.workExp],
+      ["學歷", cond.edu],
+      ["擅長工具", names(cond.specialty)],
+      ["工作技能", names(cond.skill)],
+    ]),
     "", cond.other ?? "",
     "", "## 福利", "", d.welfare?.welfare ?? "",
   ];
   return {
     title: `${d.header?.jobName ?? ""}｜${d.header?.custName ?? ""}`,
-    markdown: lines.filter((l) => l !== null).join("\n"),
+    markdown: lines.join("\n"),
   };
 }
 
@@ -63,6 +90,8 @@ const engine = ENGINES[location.hostname];
 const seen = new Set();
 let pending = new Map(); // url -> anchor
 let timer = null;
+let queryWaits = 0; // flushes deferred because the page hasn't exposed its query yet
+const MAX_QUERY_WAITS = 10;
 
 const CATEGORY_LABEL = {
   docs: "文件", tutorial: "教學", qa: "問答", news: "新聞",
@@ -93,10 +122,20 @@ function scan() {
 
 async function flush() {
   timer = null;
+  const query = engine.query();
+  if (!query) {
+    // Some sites (104) only fill in their search description after rendering; retry briefly.
+    if (++queryWaits <= MAX_QUERY_WAITS) {
+      timer = setTimeout(flush, 500);
+    } else {
+      for (const anchor of pending.values()) mount(anchor, { error: "找不到搜尋條件" });
+      pending = new Map();
+    }
+    return;
+  }
+  queryWaits = 0;
   const batch = pending;
   pending = new Map();
-  const query = engine.query();
-  if (!query) return;
 
   const urls = [...batch.keys()];
   for (let i = 0; i < urls.length; i += 10) {

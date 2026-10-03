@@ -26,14 +26,26 @@ export function cleanMarkdown(raw: string, fallbackTitle = ""): CleanPage {
   return { title, markdown: blocks.map((b) => b.text).join("\n\n"), blocks };
 }
 
+const MIN_PASSAGE_WEIGHT = 80;
+/** When no paragraph reaches MIN_PASSAGE_WEIGHT, the longest one may still qualify above this. */
+const MIN_FALLBACK_WEIGHT = 20;
+
 /** Readable paragraph candidates for "show the key passage". */
 export function toPassages(blocks: Block[], max = 40): string[] {
-  return blocks
+  const prose = blocks
     .filter((b) => !b.code && !looksLikeCode(b.text))
     .map((b) => b.text.trim())
-    .filter((p) => visibleText(p).length >= 80 && !/^[#!|>]/.test(p)) // skip headings, images, tables, quotes
-    .slice(0, max)
-    .map((p) => (p.length > 600 ? `${p.slice(0, 600)}…` : p));
+    .filter((p) => !/^[#!|>]/.test(p)) // skip headings, images, tables, quotes
+    .map((text) => ({ text, weight: textWeight(visibleText(text)) }));
+
+  let picked = prose.filter((p) => p.weight >= MIN_PASSAGE_WEIGHT);
+  if (picked.length === 0) {
+    // Pages with only short text, e.g. a job whose whole description is one line.
+    const longest = prose.reduce<(typeof prose)[number] | null>((a, p) => (!a || p.weight > a.weight ? p : a), null);
+    picked = longest && longest.weight >= MIN_FALLBACK_WEIGHT ? [longest] : [];
+  }
+
+  return picked.slice(0, max).map(({ text }) => (text.length > 600 ? `${text.slice(0, 600)}…` : text));
 }
 
 /** Markdown passage → plain text for display: link labels only, no emphasis/code marks or HTML tags. */
@@ -126,6 +138,11 @@ function looksLikeCode(text: string): boolean {
   const lines = text.split("\n").filter((l) => l.trim());
   const codey = lines.filter((l) => /[;{}(]\s*$|^\s*(\/\/|\/\*|\*)/.test(l)).length;
   return lines.length > 0 && codey / lines.length > 0.4;
+}
+
+/** Length with CJK characters counted twice: 65 Chinese characters say about as much as 130 Latin ones. */
+function textWeight(s: string): number {
+  return s.length + (s.match(/[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/g)?.length ?? 0);
 }
 
 function normalize(s: string): string {
