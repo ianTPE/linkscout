@@ -42,11 +42,7 @@ export async function judgePage(
     page: { url, title, content: markdown.slice(0, 12_000) },
   };
 
-  // Passage selection is a Choice over candidates found in code ("select, don't generate").
-  const passageOptions: Record<string, string | null> = {
-    none: "No passage has substantive content: only boilerplate, navigation, slogans, or contact details",
-  };
-  passages.forEach((p, i) => (passageOptions[`p${i}`] = p));
+  const passage = keyPassageQuestion(passages);
 
   // All questions are independent, so they go in one request and run in parallel.
   const { answers } = await client.systemOne({
@@ -67,21 +63,7 @@ export async function judgePage(
       ]),
       seo_spam: noul("Is `page.content` low-quality SEO filler, content-farm text, or mostly ads/affiliate links?"),
       category: choice("What kind of page is `page.content`?", CATEGORIES),
-      // Shown to the user in place of opening the page. Broad filter-style searches
-      // ("jobs in Taipei") have no passage that "answers" them, so fall back to the
-      // passage that best shows what the page offers.
-      key_passage: choice(
-        {
-          question:
-            "Which passage from `page.content` should the user read to decide whether this page is worth opening for `search_query`?",
-          preference: [
-            "First choice: a passage that directly answers `search_query`.",
-            "Otherwise: the passage that best describes what the page concretely offers (for a job posting, what the work involves; for an article, its main point).",
-            "Avoid passages that are generic company introductions, slogans, or contact details.",
-          ],
-        },
-        passageOptions,
-      ),
+      key_passage: passage.question,
     },
   });
 
@@ -90,7 +72,6 @@ export async function judgePage(
   const dep = answers.depth.score / 3;
   const composite = (0.65 * rel + 0.35 * dep) * (1 - 0.7 * answers.seo_spam.noul);
 
-  const picked = answers.key_passage.choice;
   return {
     url,
     score: Math.round(composite * 100),
@@ -99,6 +80,37 @@ export async function judgePage(
     seoSpam: answers.seo_spam.noul,
     category: answers.category.choice as Category,
     categoryConfidence: answers.category.confidence,
-    keyPassage: picked === "none" || !passageOptions[picked] ? null : toPlainText(passageOptions[picked]),
+    keyPassage: passage.pick(answers.key_passage.choice),
+  };
+}
+
+/**
+ * The key passage shown in place of opening the page: a Choice over candidates found
+ * in code ("select, don't generate"). Expects the page under `page.content` in state.
+ */
+export function keyPassageQuestion(passages: string[]) {
+  const options: Record<string, string | null> = {
+    none: "No passage has substantive content: only boilerplate, navigation, slogans, or contact details",
+  };
+  passages.forEach((p, i) => (options[`p${i}`] = p));
+
+  return {
+    // Broad filter-style searches ("jobs in Taipei") have no passage that "answers"
+    // them, so fall back to the passage that best shows what the page offers.
+    question: choice(
+      {
+        question:
+          "Which passage from `page.content` should the user read to decide whether this page is worth opening for `search_query`?",
+        preference: [
+          "First choice: a passage that directly answers `search_query`.",
+          "Otherwise: the passage that best describes what the page concretely offers (for a job posting, what the work involves; for an article, its main point).",
+          "Avoid passages that are generic company introductions, slogans, or contact details.",
+        ],
+      },
+      options,
+    ),
+    /** Plain-text passage for the chosen option, or null for "none". */
+    pick: (chosen: string): string | null =>
+      chosen === "none" || !options[chosen] ? null : toPlainText(options[chosen]),
   };
 }

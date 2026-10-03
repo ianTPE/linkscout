@@ -1,8 +1,19 @@
 <!doctype html>
 <meta charset="utf-8" />
 <title>LinkScout options</title>
-<style>body{font:14px system-ui;padding:16px;max-width:420px}label{display:block;margin:8px 0}input{width:100%}</style>
+<style>
+  body { font: 14px system-ui; padding: 16px; max-width: 520px; }
+  label { display: block; margin: 12px 0 4px; }
+  input, textarea { width: 100%; box-sizing: border-box; font: inherit; }
+  textarea { min-height: 9em; }
+  .hint { color: #5f6368; font-size: 12px; margin: 4px 0 0; }
+</style>
 <label>Worker URL <input id="workerUrl" placeholder="https://linkscout-worker.<you>.workers.dev" /></label>
 <label>Token <input id="token" type="password" /></label>
-<button id="save">Save</button> <span id="status"></span>
+
+<label for="jobProfile">求職條件（104 職缺評分用）</label>
+<textarea id="jobProfile" maxlength="2000" placeholder="例：20 年行政與會計經驗，熟悉 Excel、ERP 系統。希望在台北市中正區或大安區，日班、不輪班，不要粗重工作，月薪 4 萬以上，可接受部分遠端。"></textarea>
+<p class="hint">用自己的話寫背景、專長和期望的工作條件即可，最多 2000 字。這段文字會送到你的 Worker 和 Jev 評分；留空的話，104 只依搜尋條件和中高齡友善程度評分。</p>
+
+<p><button id="save">Save</button> <span id="status"></span></p>
 <script src="options.js"></script>

@@ -7,6 +7,7 @@
 //   canonical(u)   optional: strip tracking params so the same result caches once
 //   content(url)   optional: fetch the result's text from inside this page, for sites
 //                  that block Browser Run / Jina; returns { title, markdown } or null
+//   mode           optional: "job" scores results as job postings
 
 const param = (name) => () => new URLSearchParams(location.search).get(name);
 
@@ -19,6 +20,7 @@ const ENGINES = {
     links: 'h2 a[href*="/job/"]',
     canonical: (u) => u.origin + u.pathname, // drop ?jobsource=…
     content: fetch104Job,
+    mode: "job", // score as job postings against the profile from the options page
   },
 };
 
@@ -51,6 +53,14 @@ async function fetch104Job(url) {
   const job = d.jobDetail;
   const cond = d.condition ?? {};
   const names = (xs) => (xs ?? []).map((x) => x.description).filter(Boolean).join("、");
+  // { shifts: { 日班: ["11:30~15:00"], 晚班: [...] }, note } → "日班 11:30~15:00；晚班 …；note"
+  const hours = (wp) =>
+    [
+      ...Object.entries(wp?.shifts ?? {}).map(([name, times]) => [name, ...(times ?? [])].join(" ")),
+      wp?.note,
+    ]
+      .filter(Boolean)
+      .join("；");
   // Facts go in tables: Jev still reads them, but they're not offered as the key passage
   // (the 104 result list already shows company, salary and location).
   const table = (rows) => {
@@ -68,6 +78,9 @@ async function fetch104Job(url) {
       ["地點", `${job.addressRegion ?? ""}${job.addressDetail ?? ""}`],
       ["職務類別", names(job.jobCategory)],
       ["遠端", job.remoteWork?.description],
+      ["上班時段", hours(job.workPeriod)],
+      ["出差", job.businessTrip],
+      ["管理責任", job.manageResp],
     ]),
     "", "## 工作內容", "", job.jobDescription ?? "",
     "", "## 條件要求", "",
@@ -76,9 +89,12 @@ async function fetch104Job(url) {
       ["學歷", cond.edu],
       ["擅長工具", names(cond.specialty)],
       ["工作技能", names(cond.skill)],
+      ["接受身份", names(cond.acceptRole?.role)],
     ]),
     "", cond.other ?? "",
-    "", "## 福利", "", d.welfare?.welfare ?? "",
+    "", "## 福利", "",
+    ...table([["福利項目", [...(d.welfare?.tag ?? []), ...(d.welfare?.legalTag ?? [])].join("、")]]),
+    "", d.welfare?.welfare ?? "",
   ];
   return {
     title: `${d.header?.jobName ?? ""}｜${d.header?.custName ?? ""}`,
@@ -141,7 +157,7 @@ async function flush() {
   for (let i = 0; i < urls.length; i += 10) {
     const chunk = urls.slice(i, i + 10);
     const pages = engine.content ? await collectPages(chunk) : undefined;
-    chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages }, (resp) => {
+    chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages, mode: engine.mode }, (resp) => {
       for (const url of chunk) {
         const r = resp?.results?.find((x) => x.url === url);
         mount(batch.get(url), r ?? { error: resp?.error ?? "no response" });
@@ -202,15 +218,34 @@ function mount(anchor, data) {
   }
 
   const tier = data.score >= 70 ? "ls-high" : data.score >= 40 ? "ls-mid" : "ls-low";
-  box.append(badge(String(data.score), tier), badge(CATEGORY_LABEL[data.category] ?? data.category, "ls-cat"));
-  if (data.seoSpam > 0.6) box.append(badge("SEO", "ls-spam"));
+  box.append(badge(String(data.score), tier));
+  if (data.kind === "job") {
+    if (data.flag) box.append(badge(data.flag.label, data.flag.tone === "warn" ? "ls-warn" : "ls-good"));
+  } else {
+    box.append(badge(CATEGORY_LABEL[data.category] ?? data.category, "ls-cat"));
+    if (data.seoSpam > 0.6) box.append(badge("SEO", "ls-spam"));
+  }
   if (data.keyPassage) {
     const p = document.createElement("blockquote");
     p.className = "ls-passage";
     p.textContent = data.keyPassage;
     box.append(p);
   }
-  box.title = `relevance ${data.relevance.toFixed(2)}/4 · depth ${data.depth.toFixed(2)}/3 · seo ${data.seoSpam.toFixed(2)} · via ${data.source}`;
+  box.title = data.kind === "job" ? jobTooltip(data) : `relevance ${data.relevance.toFixed(2)}/4 · depth ${data.depth.toFixed(2)}/3 · seo ${data.seoSpam.toFixed(2)} · via ${data.source}`;
+}
+
+function jobTooltip(d) {
+  const n = (v, max) => (v == null ? "—（未填求職條件）" : `${v.toFixed(1)}/${max}`);
+  const pct = (v) => `${Math.round(v * 100)}%`;
+  return [
+    `能力吻合 ${n(d.skillsFit, 4)}`,
+    `想做的工作 ${d.skillsFit != null && d.interestFit == null ? "—（求職條件沒寫想做的工作）" : n(d.interestFit, 4)}`,
+    `條件符合 ${n(d.conditionsFit, 3)}`,
+    `中高齡友善 ${n(d.ageFriendly, 3)}`,
+    `搜尋相關 ${n(d.relevance, 4)}`,
+    `可遠端 ${pct(d.flags.remote)} · 時間彈性 ${pct(d.flags.flexible)} · 加班輪班 ${pct(d.flags.overtime)} · 體力 ${pct(d.flags.physical)} · 偏好年輕 ${pct(d.flags.young)}`,
+    `via ${d.source}`,
+  ].join("\n");
 }
 
 function badge(text, cls) {

@@ -1,11 +1,13 @@
-// POST /score  { query, urls[], pages? }  →  { results: (Verdict | { url, error })[] }
+// POST /score  { query, urls[], pages?, mode?, profile? }  →  { results: (Verdict | JobVerdict | { url, error })[] }
 //
 // `pages` lets the extension supply content it already has (e.g. from a site's own API,
 // fetched in the user's browser) for sites that block Browser Run and Jina.
+// `mode: "job"` scores job postings against the seeker's free-text `profile` instead.
 
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { cleanMarkdown, toPassages } from "./cleanMarkdown";
 import { fetchPage, type Source } from "./fetchPage";
+import { judgeJob, type JobVerdict } from "./jobJudge";
 import { judgePage, type Verdict } from "./judge";
 
 export interface Env {
@@ -20,7 +22,14 @@ const MAX_URLS = 10;
 /** Cap on client-supplied page content, before cleaning. */
 const MAX_PAGE_CHARS = 50_000;
 
+const MAX_PROFILE_CHARS = 2_000;
+
 type SuppliedPages = Record<string, { title?: string; markdown?: string }>;
+
+async function sha256(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 const CACHE_TTL_S = 60 * 60 * 24;
 
 const cors = {
@@ -42,11 +51,17 @@ export default {
       return json({ error: "unauthorized" }, 401);
     }
 
-    const { query, urls, pages = {} } = (await request.json()) as {
+    const { query, urls, pages = {}, mode, profile: rawProfile } = (await request.json()) as {
       query?: string;
       urls?: string[];
       pages?: SuppliedPages;
+      mode?: string;
+      profile?: string;
     };
+    const jobMode = mode === "job";
+    const profile = jobMode && typeof rawProfile === "string" ? rawProfile.trim().slice(0, MAX_PROFILE_CHARS) : "";
+    // Different profiles score the same job differently, so the profile is part of the cache key.
+    const variant = jobMode ? `job:${(await sha256(profile)).slice(0, 16)}` : "page";
     if (!query || !Array.isArray(urls) || urls.length === 0) {
       return json({ error: "body must be { query, urls[] }" }, 400);
     }
@@ -58,10 +73,10 @@ export default {
       urls.slice(0, MAX_URLS).map(async (url) => {
         // Cache per (query, url) so re-opening the same SERP is free.
         const key = new Request(
-          `https://linkscout.cache/v8?q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`,
+          `https://linkscout.cache/v10?m=${variant}&q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`,
         );
         const hit = await cache.match(key);
-        if (hit) return (await hit.json()) as Verdict & { source: Source };
+        if (hit) return (await hit.json()) as (Verdict | JobVerdict) & { source: Source };
 
         try {
           const supplied = pages[url];
@@ -69,10 +84,11 @@ export default {
             typeof supplied?.markdown === "string" && supplied.markdown.trim()
               ? { ...cleanMarkdown(supplied.markdown.slice(0, MAX_PAGE_CHARS), supplied.title), source: "page" as const }
               : await fetchPage(env, url);
-          const verdict = {
-            ...(await judgePage(client, query, url, page.title, page.markdown, toPassages(page.blocks))),
-            source: page.source,
-          };
+          const passages = toPassages(page.blocks);
+          const judged = jobMode
+            ? await judgeJob(client, query, profile, url, page.title, page.markdown, passages)
+            : await judgePage(client, query, url, page.title, page.markdown, passages);
+          const verdict = { ...judged, source: page.source };
           ctx.waitUntil(
             cache.put(key, new Response(JSON.stringify(verdict), {
               headers: { "Cache-Control": `max-age=${CACHE_TTL_S}` },

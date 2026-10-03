@@ -11,3 +11,9 @@
   .ls-cat, .ls-loading, .ls-error { background: #3c4043; color: #e8eaed; }
   .ls-passage { color: #e8eaed; background: #303134; border-left-color: #8ab4f8; }
 }
+.ls-good { background: #e6f4ea; color: #137333; }
+.ls-warn { background: #fce8e6; color: #c5221f; }
+@media (prefers-color-scheme: dark) {
+  .ls-good { background: #0d3d1f; color: #81c995; }
+  .ls-warn { background: #4c1d1a; color: #f28b82; }
+}
