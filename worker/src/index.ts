@@ -1,7 +1,8 @@
 // POST /score  { query, urls[], pages?, mode?, profile? }  →  { results: (Verdict | JobVerdict | ScreenedJob | { url, error })[] }
 //
-// `pages` lets the extension supply content it already has (e.g. from a site's own API,
-// fetched in the user's browser) for sites that block Browser Run and Jina.
+// `pages` lets the extension supply content it already has: from a site's own API, for
+// sites that block Browser Run and Jina, or an article it fetched itself in fast mode
+// (marked `via: "browser"`), which is far faster than either.
 // `mode: "job"` scores job postings against the seeker's free-text `profile` instead.
 
 import { TypeSafeClient } from "@typesafe-ai/sdk";
@@ -24,7 +25,7 @@ const MAX_PAGE_CHARS = 50_000;
 
 const MAX_PROFILE_CHARS = 2_000;
 
-type SuppliedPages = Record<string, { title?: string; markdown?: string }>;
+type SuppliedPages = Record<string, { title?: string; markdown?: string; via?: string }>;
 
 async function sha256(text: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
@@ -137,7 +138,10 @@ export default {
           const supplied = pages[url];
           const page =
             typeof supplied?.markdown === "string" && supplied.markdown.trim()
-              ? { ...cleanMarkdown(supplied.markdown.slice(0, MAX_PAGE_CHARS), supplied.title), source: "page" as const }
+              ? {
+                  ...cleanMarkdown(supplied.markdown.slice(0, MAX_PAGE_CHARS), supplied.title),
+                  source: (supplied.via === "browser" ? "browser" : "page") as Source,
+                }
               : await fetchPage(env, url);
           const passages = toPassages(page.blocks);
           const judged = jobMode

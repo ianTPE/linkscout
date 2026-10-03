@@ -9,16 +9,20 @@
 //                  that block Browser Run / Jina; returns { title, markdown } or null
 //   mode           optional: "job" scores results as job postings
 //   reorder        optional: false (or a function returning false) where results must keep the site's order
+//   keepGroups     optional: true (or a function) to sort a block of several results as one unit,
+//                  by its best score, without touching its inside
 
 const param = (name) => () => new URLSearchParams(location.search).get(name);
 
-// Google's News tab (tbm=nws) titles are [role=heading] cards, not <h3>, laid out in a
-// two-column grid grouped by story, which a flex-column reorder would collapse.
+// Google's News tab (tbm=nws) titles are [role=heading] cards, not <h3>. Some results are
+// story blocks of four cards in a 2×2 grid, which sorting inside would collapse, so the
+// blocks move as units.
 const isGoogleNews = () => param("tbm")() === "nws";
 const GOOGLE = {
   query: param("q"),
   links: () => (isGoogleNews() ? '#search a:has([role="heading"])' : "#search a:has(h3)"),
-  reorder: () => !isGoogleNews(),
+  keepGroups: isGoogleNews,
+  content: fetchArticle,
 };
 
 const ENGINES = {
@@ -28,6 +32,7 @@ const ENGINES = {
     query: param("q"),
     // News (/news/search) is a plain list of .news-card items with direct article links.
     links: () => (location.pathname.startsWith("/news/") ? "#algocore .news-card a.title" : "#b_results li.b_algo h2 a"),
+    content: fetchArticle,
   },
   "duckduckgo.com": {
     query: param("q"),
@@ -36,6 +41,7 @@ const ENGINES = {
       param("ia")() === "news"
         ? '[data-testid="news-vertical"] li > article > a[href^="http"]'
         : 'a[data-testid="result-title-a"]',
+    content: fetchArticle,
   },
   "www.104.com.tw": {
     query: query104,
@@ -48,6 +54,131 @@ const ENGINES = {
     mode: "job", // score as job postings against the profile from the options page
   },
 };
+
+// ---------------------------------------------------------------------------
+// Fast mode: the browser fetches each result page itself (via the background, which
+// has the optional <all_urls> permission) and extracts the article with Mozilla
+// Readability, the engine behind Firefox Reader View. News sites answer in well under
+// a second this way, against 3–30 s through Browser Run or Jina. Pages that fail here
+// (logins, bot walls, script-only pages) are left for the Worker to fetch as before.
+// ---------------------------------------------------------------------------
+
+/** Below this much article text, let the Worker try instead (paywall stub, challenge page). */
+const MIN_ARTICLE_CHARS = 300;
+let fastMode = null; // Promise<boolean>, asked once per page
+
+async function fetchArticle(url) {
+  fastMode ??= chrome.runtime.sendMessage({ type: "fastMode" }).catch(() => false);
+  if (!(await fastMode)) return null;
+  const res = await chrome.runtime.sendMessage({ type: "fetchHtml", url });
+  if (!res?.html) return null;
+
+  // DOMParser documents are inert: no scripts run and nothing loads.
+  const doc = new DOMParser().parseFromString(res.html, "text/html");
+  const enough = (md) => md && md.replace(/\s+/g, "").length >= MIN_ARTICLE_CHARS;
+
+  // The publisher's own article text for search engines, where present, beats Readability's
+  // guess: on bnext.com.tw Readability picked a sponsored story over the article.
+  const ld = ldArticle(doc);
+  const ldMarkdown = ld?.body && (/<[a-z]/i.test(ld.body) ? articleMarkdown(ld.body) : textMarkdown(ld.body));
+  if (enough(ldMarkdown)) return { title: ld.title || doc.title, markdown: ldMarkdown, via: "browser" };
+
+  const article = new Readability(doc).parse(); // consumes doc, so it runs last
+  const markdown = article?.content && articleMarkdown(article.content);
+  return enough(markdown) ? { title: article.title || doc.title, markdown, via: "browser" } : null;
+}
+
+/** articleBody and headline from the page's JSON-LD (schema.org NewsArticle and kin). */
+function ldArticle(doc) {
+  for (const script of doc.querySelectorAll('script[type="application/ld+json"]')) {
+    let data;
+    try {
+      data = JSON.parse(script.textContent);
+    } catch {
+      continue; // some sites ship invalid JSON-LD
+    }
+    const stack = [data];
+    while (stack.length) {
+      const x = stack.pop();
+      if (Array.isArray(x)) stack.push(...x);
+      else if (x && typeof x === "object") {
+        if (typeof x.articleBody === "string") return { body: x.articleBody, title: x.headline };
+        stack.push(...Object.values(x));
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Plain article text → paragraphs. Some sites put the whole article on one line, which
+ * would leave one oversized passage to choose from, so long runs split at sentence ends.
+ */
+function textMarkdown(text) {
+  const paras = [];
+  for (const line of text.split(/\n+/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean)) {
+    let chunk = "";
+    for (const sentence of line.match(/[^。！？!?]+[。！？!?」』]*|[^。！？!?]+$/g) ?? [line]) {
+      chunk += sentence;
+      if (chunk.length >= 200) {
+        paras.push(chunk.trim());
+        chunk = "";
+      }
+    }
+    if (chunk.trim()) paras.push(chunk.trim());
+  }
+  return paras.join("\n\n");
+}
+
+const BLOCKS = "p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, table";
+const CONTAINERS = /^(DIV|SECTION|ARTICLE|MAIN|HEADER|FOOTER|ASIDE|FIGURE|UL|OL)$/;
+
+/**
+ * Article HTML (Readability's output, or a JSON-LD articleBody) → the Markdown the Worker
+ * expects: one block per paragraph. Handles WordPress-style bodies too, where paragraphs
+ * are bare text separated by blank lines or <br><br> rather than wrapped in <p>.
+ */
+function articleMarkdown(html) {
+  const root = new DOMParser().parseFromString(html, "text/html").body;
+  const text = (el) => el.textContent.replace(/\s+/g, " ").trim();
+  const out = [];
+  const walk = (el) => {
+    let inline = ""; // bare text and inline elements since the last block
+    const flushInline = () => {
+      for (const part of inline.split(/\n\s*\n/)) {
+        const t = part.replace(/\s+/g, " ").trim();
+        if (t) out.push(t);
+      }
+      inline = "";
+    };
+    for (const c of el.childNodes) {
+      if (c.nodeType === Node.TEXT_NODE) inline += c.textContent;
+      if (c.nodeType !== Node.ELEMENT_NODE) continue;
+      const tag = c.tagName;
+      if (tag === "BR") {
+        inline += "\n";
+        continue;
+      }
+      const block = /^(H[1-6]|P|LI|BLOCKQUOTE|PRE|TABLE)$/.test(tag) || CONTAINERS.test(tag) || c.querySelector(BLOCKS);
+      if (!block) {
+        inline += c.textContent;
+        continue;
+      }
+      flushInline();
+      if (/^H[1-6]$/.test(tag)) out.push(`${"#".repeat(Number(tag[1]))} ${text(c)}`);
+      else if (tag === "P") out.push(text(c));
+      else if (tag === "LI") out.push(`- ${text(c)}`);
+      else if (tag === "BLOCKQUOTE") out.push(`> ${text(c)}`);
+      else if (tag === "PRE") out.push("```\n" + c.textContent.trim() + "\n```");
+      else if (tag === "TABLE") {
+        for (const row of c.querySelectorAll("tr")) out.push(`| ${[...row.cells].map(text).join(" | ")} |`);
+      } else walk(c);
+    }
+    flushInline();
+  };
+  walk(root);
+  return out.filter((b) => b.replace(/^[-#>|\s]+/, "")).join("\n\n");
+}
 
 /**
  * 104 rewrites the page title to describe every active filter, e.g.
@@ -129,6 +260,7 @@ async function fetch104Job(url) {
 
 const engine = ENGINES[location.hostname];
 const linkSelector = () => (typeof engine.links === "function" ? engine.links() : engine.links);
+const keepGroups = () => (typeof engine.keepGroups === "function" ? engine.keepGroups() : !!engine.keepGroups);
 const canReorder = () => (typeof engine.reorder === "function" ? engine.reorder() : engine.reorder !== false);
 const results = new Map(); // url -> result, or { loading: true } while in flight
 // anchor -> url its box shows. Not a plain "seen" set: 104's virtual list reuses the same
@@ -202,15 +334,17 @@ async function flush() {
   // rest; job sites send whole batches (their content comes along, and triage wants them together).
   const batchSize = engine.mode === "job" ? 10 : 3;
 
+  // Chunks go out in parallel, so a slow page in one chunk doesn't delay the next.
   for (let i = 0; i < urls.length; i += batchSize) {
     const chunk = urls.slice(i, i + batchSize);
-    const pages = engine.content ? await collectPages(chunk) : undefined;
-    chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages, mode: engine.mode }, (resp) => {
-      for (const url of chunk) {
-        results.set(url, resp?.results?.find((x) => x.url === url) ?? { error: resp?.error ?? "no response" });
-        render(url);
-      }
-      applyOrder();
+    (engine.content ? collectPages(chunk) : Promise.resolve(undefined)).then((pages) => {
+      chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages, mode: engine.mode }, (resp) => {
+        for (const url of chunk) {
+          results.set(url, resp?.results?.find((x) => x.url === url) ?? { error: resp?.error ?? "no response" });
+          render(url);
+        }
+        applyOrder();
+      });
     });
   }
 }
@@ -435,9 +569,12 @@ chrome.storage.sync.get({ reorder: true }).then((v) => {
 function applyOrder() {
   if (!engine || !canReorder()) return;
   restoreOrder();
-  const anchors = [...document.querySelectorAll(linkSelector())].filter((a) => typeof scoreOf(a) === "number");
+  const all = [...document.querySelectorAll(linkSelector())];
+  const anchors = all.filter((a) => typeof scoreOf(a) === "number");
   if (reorderOn && anchors.length >= 2) {
-    const moved = reorderWithin(anchors);
+    // Keeping groups: sort under the container of every result, even while only the ones
+    // inside one block are scored, so a block is never sorted from the inside.
+    const moved = keepGroups() ? reorderWithin(anchors, commonAncestor(all), true) : reorderWithin(anchors);
     showToast(moved);
   } else if (anchors.length >= 2) {
     showToast(0);
@@ -449,10 +586,8 @@ function applyOrder() {
  * holding several results (e.g. a grouped block) stays put and is sorted inside.
  * Non-result siblings (ads, "People also ask") keep their slots. Returns how many moved.
  */
-function reorderWithin(anchors) {
-  if (anchors.length < 2) return 0;
-  const parent = commonAncestor(anchors);
-  if (!parent) return 0;
+function reorderWithin(anchors, parent = commonAncestor(anchors), wholeGroups = false) {
+  if (anchors.length < 2 || !parent) return 0;
 
   const groups = new Map(); // child of parent -> anchors inside it
   for (const a of anchors) {
@@ -465,6 +600,7 @@ function reorderWithin(anchors) {
   const singles = [];
   for (const [child, inside] of groups) {
     if (inside.length === 1) singles.push({ child, score: scoreOf(inside[0]) });
+    else if (wholeGroups) singles.push({ child, score: Math.max(...inside.map(scoreOf)) });
     else moved += reorderWithin(inside);
   }
   if (singles.length < 2) return moved;

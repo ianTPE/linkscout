@@ -11,6 +11,9 @@
 <label>Worker URL <input id="workerUrl" placeholder="https://linkscout-worker.<you>.workers.dev" /></label>
 <label>Token <input id="token" type="password" /></label>
 
+<label><input id="fastMode" type="checkbox" style="width:auto" /> 快速模式：由瀏覽器直接讀取搜尋結果頁面</label>
+<p class="hint">結果約 1～2 秒內出現（關閉時要 10～20 秒）。Chrome 會詢問是否允許「讀取所有網站」：擴充功能需要它才能讀取任何新聞網站。讀取時不帶你的登入資料，效果等於你自己點開那則結果。讀不到的頁面會自動改由 Worker 讀取。這個開關會立即生效，不用按 Save。</p>
+
 <label><input id="reorder" type="checkbox" style="width:auto" /> 依分數重新排序搜尋結果</label>
 <p class="hint">只改變顯示順序，不動頁面內容；頁面右下角可以隨時切換回原始順序。</p>
 

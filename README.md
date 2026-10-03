@@ -53,6 +53,21 @@ Search page (extension)  ──urls+query──▶  Worker /score
 
    Then put the workers.dev URL and that token into the extension's options page.
 
+## Fast mode
+
+Fetching a page through Browser Run or Jina takes 3–30 s; Jev's judgment takes about 0.25 s. Measured on 10 Taiwanese news articles fetched at once:
+
+| Step | Time |
+| --- | --- |
+| Kitesurf (Browser Run) | 10–24 s, 3 of 10 still running after 30 s |
+| Jina Reader | 3–16 s |
+| The same pages fetched directly | 0.06–0.4 s (one site 2.9 s) |
+| Jev, six questions | ~0.25 s |
+
+So in fast mode (a switch on the options page, which asks for Chrome's optional "read all sites" permission), the extension fetches each result page itself, without cookies, and extracts the article: from the page's JSON-LD `articleBody` when it has one, else with [Mozilla Readability](https://github.com/mozilla/readability) (vendored in `extension/vendor/`, Apache 2.0). The Worker then only asks Jev. Pages that yield under 300 characters (logins, bot walls, script-only pages) fall back to the Worker's fetchers. On the same 10 articles, both extractions picked the same key passage for 9 and scored within 10 points of each other.
+
+`worker/scripts/timing.ts` and `worker/scripts/compare.ts` reproduce these measurements (`npx vite-node scripts/timing.ts urls.txt "query"`); they read keys from `.env` and never print them.
+
 ## Scoring
 
 Search results (Google, Bing, DuckDuckGo, including their News tabs) are judged by `worker/src/judge.ts`, which asks Jev six independent questions in one `systemOne` request:

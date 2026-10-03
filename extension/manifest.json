@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "description": "Scores search results before you click: relevance, depth, category, and the key passage.",
   "permissions": ["storage"],
+  "optional_host_permissions": ["<all_urls>"],
   "host_permissions": ["https://*.workers.dev/*", "http://localhost:8787/*"],
   "background": { "service_worker": "background.js" },
   "content_scripts": [
@@ -16,7 +17,7 @@
         "https://duckduckgo.com/*",
         "https://www.104.com.tw/jobs/search*"
       ],
-      "js": ["content.js"],
+      "js": ["vendor/Readability.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

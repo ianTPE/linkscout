@@ -19,3 +19,12 @@ $("save").onclick = async () => {
   });
   $("status").textContent = "Saved";
 };
+
+// Fast mode is the optional <all_urls> permission itself, so it applies at once and Chrome's
+// own record of it is the only state. Requesting it needs this click (a user gesture).
+const ALL_SITES = { origins: ["<all_urls>"] };
+chrome.permissions.contains(ALL_SITES).then((on) => ($("fastMode").checked = on));
+$("fastMode").onchange = async (e) => {
+  const ok = e.target.checked ? await chrome.permissions.request(ALL_SITES) : await chrome.permissions.remove(ALL_SITES);
+  if (!ok) e.target.checked = !e.target.checked; // the user declined, or Chrome refused
+};

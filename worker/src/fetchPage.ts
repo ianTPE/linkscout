@@ -10,8 +10,11 @@ export interface FetchEnv {
   JINA_API_KEY?: string;
 }
 
-/** "page": content supplied by the extension instead of fetched here. */
-export type Source = "kitesurf" | "jina" | "page";
+/**
+ * "page": content supplied by the extension instead of fetched here, e.g. from 104's API;
+ * "browser": an article the extension fetched and extracted itself (fast mode).
+ */
+export type Source = "kitesurf" | "jina" | "page" | "browser";
 
 /**
  * Per-source time limits. Kitesurf can hang on some sites (money.udn.com: no response
