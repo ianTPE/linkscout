@@ -6,4 +6,8 @@
 .ls-cat { background: #e8eaed; color: #3c4043; font-weight: 500; }
 .ls-spam { background: #d93025; color: #fff; }
 .ls-loading, .ls-error { background: #e8eaed; color: #5f6368; }
-.ls-passage { flex-basis: 100%; margin: 2px 0 0; padding: 4px 8px; border-left: 3px solid #1a73e8; color: #3c4043; background: #f8f9fa; }
+.ls-passage { flex-basis: 100%; margin: 2px 0 0; white-space: pre-line; padding: 4px 8px; border-left: 3px solid #1a73e8; color: #3c4043; background: #f8f9fa; }
+@media (prefers-color-scheme: dark) {
+  .ls-cat, .ls-loading, .ls-error { background: #3c4043; color: #e8eaed; }
+  .ls-passage { color: #e8eaed; background: #303134; border-left-color: #8ab4f8; }
+}

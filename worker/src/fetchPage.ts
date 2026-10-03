@@ -15,6 +15,20 @@ export type Source = "kitesurf" | "jina";
 /** Below this (after cleaning), treat the result as a failed render (bot wall, empty shell, error page). */
 const MIN_CONTENT_CHARS = 200;
 
+/**
+ * Bot walls and challenge pages (Cloudflare, Akamai, CAPTCHAs). These can exceed
+ * MIN_CONTENT_CHARS, so check them explicitly or they get scored as content.
+ */
+const BLOCKED_TITLE = /^(attention required|just a moment|access denied|403 forbidden|are you a robot|security check)/i;
+const BLOCKED_BODY = /you have been blocked|verify (that )?you are (a )?human|enable javascript and cookies to continue|checking your browser|unusual traffic from your computer/i;
+
+function blockedReason(page: CleanPage): string | null {
+  if (BLOCKED_TITLE.test(page.title)) return `blocked ("${page.title}")`;
+  // Only short pages: a real article may mention these phrases.
+  if (page.markdown.length < 3000 && BLOCKED_BODY.test(page.markdown)) return "blocked (challenge page)";
+  return null;
+}
+
 interface RawPage {
   markdown: string;
   title?: string;
@@ -29,8 +43,11 @@ export async function fetchPage(env: FetchEnv, url: string): Promise<CleanPage &
     try {
       const raw = await fetcher(env, url);
       const page = cleanMarkdown(raw.markdown, raw.title);
-      if (page.markdown.length >= MIN_CONTENT_CHARS) return { ...page, source };
-      errors.push(`${source}: only ${page.markdown.length} chars after cleaning`);
+      const problem =
+        blockedReason(page) ??
+        (page.markdown.length < MIN_CONTENT_CHARS ? `only ${page.markdown.length} chars after cleaning` : null);
+      if (!problem) return { ...page, source };
+      errors.push(`${source}: ${problem}`);
     } catch (err) {
       errors.push(`${source}: ${err instanceof Error ? err.message : String(err)}`);
     }

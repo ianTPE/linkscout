@@ -58,21 +58,39 @@ function flush() {
   }
 }
 
+const boxes = new WeakMap(); // anchor -> its .linkscout box
+
+/**
+ * Where to insert the box. Google wraps result titles in a flipped span
+ * (transform: scaleY(-1)) inside a column-reverse flexbox; anything inserted
+ * inside renders upside down and above the title. Go past the outermost such wrapper.
+ */
+function mountPoint(anchor) {
+  let point = anchor;
+  for (let el = anchor, depth = 0; el && el !== document.body && depth < 6; el = el.parentElement, depth++) {
+    const cs = getComputedStyle(el);
+    if (cs.transform !== "none" || cs.flexDirection.endsWith("reverse")) point = el;
+  }
+  return point;
+}
+
 function mount(anchor, data) {
-  let box = anchor.parentElement.querySelector(":scope > .linkscout");
+  let box = boxes.get(anchor);
   if (!box) {
     box = document.createElement("div");
     box.className = "linkscout";
-    anchor.insertAdjacentElement("afterend", box);
+    mountPoint(anchor).insertAdjacentElement("afterend", box);
+    boxes.set(anchor, box);
   }
   box.replaceChildren();
+  box.removeAttribute("title");
 
   if (data.loading) {
     box.append(badge("…", "ls-loading"));
     return;
   }
   if (data.error) {
-    box.append(badge("?", "ls-error"));
+    box.append(badge("無法讀取", "ls-error"));
     box.title = data.error;
     return;
   }

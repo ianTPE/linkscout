@@ -36,6 +36,21 @@ export function toPassages(blocks: Block[], max = 40): string[] {
     .map((p) => (p.length > 600 ? `${p.slice(0, 600)}…` : p));
 }
 
+/** Markdown passage → plain text for display: link labels only, no emphasis/code marks or HTML tags. */
+export function toPlainText(md: string): string {
+  return md
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\]\([^)]*$/, "") // link cut off by passage truncation
+    .replace(/[[\]]/g, "")
+    .replace(/<\/?[a-z][^>]*>/gi, "")
+    .replace(/\*\*|__|`/g, "")
+    .replace(/^[ \t]*(?:[-*+]|\d+\.)[ \t]+/gm, "• ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
 function splitFrontMatter(raw: string): { title: string; body: string } {
   const m = raw.match(/^---\n([\s\S]*?)\n---\n?/);
   if (!m) return { title: "", body: raw };

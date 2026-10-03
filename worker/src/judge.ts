@@ -2,6 +2,7 @@
 // Docs: https://docs.typesafe.ai/api.md
 
 import { choice, noul, score, TypeSafeClient } from "@typesafe-ai/sdk";
+import { toPlainText } from "./cleanMarkdown";
 
 const CATEGORIES = {
   docs: "Official documentation, API reference, or specification",
@@ -85,6 +86,6 @@ export async function judgePage(
     seoSpam: answers.seo_spam.noul,
     category: answers.category.choice as Category,
     categoryConfidence: answers.category.confidence,
-    keyPassage: picked === "none" ? null : passageOptions[picked] ?? null,
+    keyPassage: picked === "none" || !passageOptions[picked] ? null : toPlainText(passageOptions[picked]),
   };
 }
