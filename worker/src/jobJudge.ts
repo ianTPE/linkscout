@@ -17,7 +17,7 @@ const INTEREST_BADGE_MIN = 3;
 
 export interface JobFlag {
   label: string;
-  tone: "good" | "warn";
+  tone: "good" | "warn" | "muted";
 }
 
 export interface JobVerdict {
@@ -220,4 +220,72 @@ function pickFlag(
     ["時間彈性", flags.flexible],
   ]);
   return plus ? { label: plus, tone: "good" } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Title-only triage: one request screens a whole batch before full scoring.
+// Measured on 10 jobs: ~1,500 tokens for the batch vs ~3,600 per job for full
+// scoring; the clear mismatches it drops save roughly a quarter of the tokens.
+// ---------------------------------------------------------------------------
+
+/** Jobs below this probability of plausibly suiting the seeker skip full scoring. Kept low: a wrong skip hides a real match. */
+export const TRIAGE_CUTOFF = 0.15;
+
+export interface ScreenedJob {
+  url: string;
+  kind: "job";
+  screened: true;
+  /** Probability from triage that the job could suit the seeker. */
+  plausible: number;
+  score: number;
+  flag: JobFlag;
+  keyPassage: null;
+}
+
+/** Returns url → probability for the jobs that fail triage; jobs that pass are absent. */
+export async function triageJobs(
+  client: TypeSafeClient,
+  profile: string,
+  jobs: { url: string; title: string; markdown: string }[],
+): Promise<Map<string, number>> {
+  const facts = Object.fromEntries(
+    jobs.map((j, i) => [
+      `j${i}`,
+      {
+        // 104 titles are "職稱｜公司"; location comes from the job's fact table.
+        title: j.title,
+        location: j.markdown.match(/^\| 地點 \| (.*) \|$/m)?.[1] ?? "",
+      },
+    ]),
+  );
+  const { answers } = await client.systemOne({
+    state: { job_seeker: profile, jobs: facts },
+    questions: Object.fromEntries(
+      jobs.map((_, i) => [
+        `j${i}`,
+        noul(
+          `Could the job \`jobs.j${i}\` plausibly suit \`job_seeker\`, judging only from its title, company, and location? Answer yes unless it is clearly unsuitable.`,
+        ),
+      ]),
+    ),
+  });
+
+  const failed = new Map<string, number>();
+  jobs.forEach((j, i) => {
+    const p = answers[`j${i}`].noul;
+    if (p < TRIAGE_CUTOFF) failed.set(j.url, p);
+  });
+  return failed;
+}
+
+export function screenedVerdict(url: string, plausible: number): ScreenedJob {
+  return {
+    url,
+    kind: "job",
+    screened: true,
+    plausible,
+    score: Math.round(plausible * 100),
+    flag: { label: "初篩略過", tone: "muted" },
+    keyPassage: null,
+  };
 }

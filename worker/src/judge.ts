@@ -24,6 +24,9 @@ export interface Verdict {
   relevance: number; // 0–4
   depth: number; // 0–3
   seoSpam: number; // probability 0–1
+  promotional: number; // probability 0–1 that the page is mainly selling something
+  /** Probability that the search itself is to buy or find a product/service; sales pages aren't penalized then. */
+  transactional: number;
   category: Category;
   categoryConfidence: number;
   keyPassage: string | null;
@@ -36,6 +39,7 @@ export async function judgePage(
   title: string,
   markdown: string,
   passages: string[],
+  transactional: number,
 ): Promise<Verdict> {
   const state = {
     search_query: query,
@@ -62,6 +66,9 @@ export async function judgePage(
         "Rich: expert-level detail, original data, or working code",
       ]),
       seo_spam: noul("Is `page.content` low-quality SEO filler, content-farm text, or mostly ads/affiliate links?"),
+      promotional: noul(
+        "Is `page.content` mainly a sales, product, pricing, or marketing page whose purpose is to sell something?",
+      ),
       category: choice("What kind of page is `page.content`?", CATEGORIES),
       key_passage: passage.question,
     },
@@ -70,7 +77,9 @@ export async function judgePage(
   // Policy lives in code: tweak weights without re-running inference.
   const rel = answers.relevance.score / 4;
   const dep = answers.depth.score / 3;
-  const composite = (0.65 * rel + 0.35 * dep) * (1 - 0.7 * answers.seo_spam.noul);
+  // Sales pages are what a shopping search wants, so the penalty fades as the search gets transactional.
+  const promoPenalty = 0.5 * answers.promotional.noul * (1 - transactional);
+  const composite = (0.65 * rel + 0.35 * dep) * (1 - 0.7 * answers.seo_spam.noul) * (1 - promoPenalty);
 
   return {
     url,
@@ -78,10 +87,32 @@ export async function judgePage(
     relevance: answers.relevance.score,
     depth: answers.depth.score,
     seoSpam: answers.seo_spam.noul,
+    promotional: answers.promotional.noul,
+    transactional,
     category: answers.category.choice as Category,
     categoryConfidence: answers.category.confidence,
     keyPassage: passage.pick(answers.key_passage.choice),
   };
+}
+
+/**
+ * Once per search: is the user trying to buy something or find a product, service, or
+ * local business (rather than learn about something)? State is the query alone.
+ */
+export async function searchIntent(client: TypeSafeClient, query: string): Promise<number> {
+  const { answers } = await client.systemOne({
+    state: { search_query: query },
+    questions: {
+      transactional: noul(
+        "Is the goal of `search_query` to buy something, or to find a specific product, service, store, or local business to use, rather than to learn or research?",
+        {
+          true: "Shopping or local: e.g. 'buy nike pegasus 41', 'pizza delivery near me', 'iPhone 17 價格', '台北 牙醫 推薦 預約'",
+          false: "Learning or research: e.g. 'how does MutationObserver work', 'best vpn comparison', 'MutationObserver 怎麼用'",
+        },
+      ),
+    },
+  });
+  return answers.transactional.noul;
 }
 
 /**

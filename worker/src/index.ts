@@ -1,4 +1,4 @@
-// POST /score  { query, urls[], pages?, mode?, profile? }  →  { results: (Verdict | JobVerdict | { url, error })[] }
+// POST /score  { query, urls[], pages?, mode?, profile? }  →  { results: (Verdict | JobVerdict | ScreenedJob | { url, error })[] }
 //
 // `pages` lets the extension supply content it already has (e.g. from a site's own API,
 // fetched in the user's browser) for sites that block Browser Run and Jina.
@@ -7,8 +7,8 @@
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { cleanMarkdown, toPassages } from "./cleanMarkdown";
 import { fetchPage, type Source } from "./fetchPage";
-import { judgeJob, type JobVerdict } from "./jobJudge";
-import { judgePage, type Verdict } from "./judge";
+import { judgeJob, screenedVerdict, triageJobs } from "./jobJudge";
+import { judgePage, searchIntent } from "./judge";
 
 export interface Env {
   CF_ACCOUNT_ID: string;
@@ -69,14 +69,69 @@ export default {
     const client = new TypeSafeClient({ apiKey: env.TYPESAFE_API_KEY });
     const cache = caches.default;
 
+    // Page mode: judge the search's intent once, before the per-page calls that depend on it.
+    let transactional = 0;
+    if (!jobMode) {
+      const intentKey = new Request(`https://linkscout.cache/intent/v1?q=${encodeURIComponent(query)}`);
+      const hit = await cache.match(intentKey);
+      if (hit) {
+        transactional = Number(await hit.text());
+      } else {
+        try {
+          transactional = await searchIntent(client, query);
+          ctx.waitUntil(
+            cache.put(intentKey, new Response(String(transactional), {
+              headers: { "Cache-Control": `max-age=${CACHE_TTL_S}` },
+            })),
+          );
+        } catch {
+          // Unknown intent: treat as research, i.e. keep penalizing sales pages.
+        }
+      }
+    }
+
+    const todo = urls.slice(0, MAX_URLS);
+    // Cache per (mode/profile, query, url) so re-opening the same results page is free.
+    const keyFor = (url: string) =>
+      new Request(`https://linkscout.cache/v14?m=${variant}&q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`);
+    const save = <T>(url: string, verdict: T): T => {
+      ctx.waitUntil(
+        cache.put(keyFor(url), new Response(JSON.stringify(verdict), {
+          headers: { "Cache-Control": `max-age=${CACHE_TTL_S}` },
+        })),
+      );
+      return verdict;
+    };
+
+    // Cached verdicts first, so triage and scoring only touch the rest.
+    const cached = new Map<string, unknown>();
+    await Promise.all(
+      todo.map(async (url) => {
+        const hit = await cache.match(keyFor(url));
+        if (hit) cached.set(url, await hit.json());
+      }),
+    );
+
+    // Job mode with a profile: one cheap title-only request screens out clear mismatches
+    // before the per-job scoring. Without a profile there is nothing to screen against.
+    let screened = new Map<string, number>();
+    if (jobMode && profile) {
+      const candidates = todo
+        .filter((url) => !cached.has(url) && pages[url]?.title && pages[url]?.markdown)
+        .map((url) => ({ url, title: pages[url].title!, markdown: pages[url].markdown! }));
+      if (candidates.length >= 2) {
+        try {
+          screened = await triageJobs(client, profile, candidates);
+        } catch {
+          // Triage is only an optimization: on failure, score everything.
+        }
+      }
+    }
+
     const results = await Promise.all(
-      urls.slice(0, MAX_URLS).map(async (url) => {
-        // Cache per (query, url) so re-opening the same SERP is free.
-        const key = new Request(
-          `https://linkscout.cache/v12?m=${variant}&q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`,
-        );
-        const hit = await cache.match(key);
-        if (hit) return (await hit.json()) as (Verdict | JobVerdict) & { source: Source };
+      todo.map(async (url) => {
+        if (cached.has(url)) return cached.get(url);
+        if (screened.has(url)) return save(url, { ...screenedVerdict(url, screened.get(url)!), source: "page" as Source });
 
         try {
           const supplied = pages[url];
@@ -87,14 +142,8 @@ export default {
           const passages = toPassages(page.blocks);
           const judged = jobMode
             ? await judgeJob(client, query, profile, url, page.title, page.markdown, passages)
-            : await judgePage(client, query, url, page.title, page.markdown, passages);
-          const verdict = { ...judged, source: page.source };
-          ctx.waitUntil(
-            cache.put(key, new Response(JSON.stringify(verdict), {
-              headers: { "Cache-Control": `max-age=${CACHE_TTL_S}` },
-            })),
-          );
-          return verdict;
+            : await judgePage(client, query, url, page.title, page.markdown, passages, transactional);
+          return save(url, { ...judged, source: page.source });
         } catch (err) {
           return { url, error: err instanceof Error ? err.message : String(err) };
         }
