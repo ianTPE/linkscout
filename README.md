@@ -56,3 +56,7 @@ Search page (extension)  ──urls+query──▶  Worker /score
 ## Scoring
 
 `worker/src/judge.ts` asks Jev five independent questions in one request: relevance (Score 0–4), depth (Score 0–3), SEO filler (Noul), category (Choice), and key passage (a Choice over paragraphs that code has already split out). The 0–100 total is computed in code, so changing the weights doesn't require running the model again.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
