@@ -1,0 +1,44 @@
+import { describe, expect, it } from "vitest";
+import { judgeMonitor, monitorScore } from "../src/monitorJudge";
+import { fakeClient } from "./fakeClient";
+
+const answers = (o: { section?: string; importance?: number; prominence?: number } = {}) => ({
+  section: { choice: o.section ?? "exposure", confidence: 0.9 },
+  tone: { choice: "negative", confidence: 0.8 },
+  topic: { choice: "legal", confidence: 0.7 },
+  prominence: { score: o.prominence ?? 3 },
+  importance: { score: o.importance ?? 3 },
+  key_passage: { choice: "none" },
+});
+
+describe("monitorScore", () => {
+  it("ranks every exposure article above every industry article", () => {
+    expect(monitorScore("exposure", 0, 0)).toBe(40);
+    expect(monitorScore("industry", 3, 3)).toBe(80);
+    expect(monitorScore("exposure", 3, 3)).toBe(100);
+  });
+
+  it("keeps excluded articles at the bottom", () => {
+    expect(monitorScore("stock", 3, 3)).toBe(10);
+    expect(monitorScore("unrelated", 0, 0)).toBe(0);
+    expect(monitorScore("industry", 0, 0)).toBe(20);
+  });
+});
+
+describe("judgeMonitor", () => {
+  it("asks all questions in one request, with the client in state", async () => {
+    const { client, requests } = fakeClient(answers());
+    await judgeMonitor(client, "台積電", "客戶：台積電", "https://example.com", "T", "c", []);
+    expect(requests).toHaveLength(1);
+    expect(Object.keys(requests[0].questions).sort()).toEqual(
+      ["importance", "key_passage", "prominence", "section", "tone", "topic"],
+    );
+    expect((requests[0].state as { monitoring_client: string }).monitoring_client).toBe("客戶：台積電");
+  });
+
+  it("returns the section, tone and topic with the computed score", async () => {
+    const { client } = fakeClient(answers({ section: "stock", importance: 1.5 }));
+    const v = await judgeMonitor(client, "q", "p", "https://example.com", "T", "c", []);
+    expect(v).toMatchObject({ kind: "monitor", section: "stock", tone: "negative", topic: "legal", score: 5 });
+  });
+});

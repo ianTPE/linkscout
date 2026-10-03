@@ -2,12 +2,12 @@
 // and the shared token never touches the search page. In fast mode it also fetches
 // result pages directly, for the content script to extract their text.
 
-const DEFAULTS = { workerUrl: "http://localhost:8787", token: "dev-token", jobProfile: "" };
+const DEFAULTS = { workerUrl: "http://localhost:8787", token: "dev-token", jobProfile: "", monitorProfile: "" };
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "score") return;
   (async () => {
-    const { workerUrl, token, jobProfile } = await chrome.storage.sync.get(DEFAULTS);
+    const { workerUrl, token, jobProfile, monitorProfile } = await chrome.storage.sync.get(DEFAULTS);
     try {
       const res = await fetch(`${workerUrl.replace(/\/$/, "")}/score`, {
         // The Worker bounds each page fetch; this only guards against a stuck connection.
@@ -18,8 +18,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           query: msg.query,
           urls: msg.urls,
           pages: msg.pages,
-          // The job profile only goes along for job sites.
+          // Each profile only goes along in its own mode: the job profile for job sites,
+          // the monitoring client for search pages in monitoring mode.
           ...(msg.mode === "job" ? { mode: "job", profile: jobProfile } : {}),
+          ...(msg.mode === "monitor" ? { mode: "monitor", profile: monitorProfile } : {}),
         }),
       });
       if (!res.ok) throw new Error(`Worker ${res.status}: ${await res.text()}`);

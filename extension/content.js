@@ -7,7 +7,8 @@
 //   canonical(u)   optional: strip tracking params so the same result caches once
 //   content(url)   optional: fetch the result's text from inside this page, for sites
 //                  that block Browser Run / Jina; returns { title, markdown } or null
-//   mode           optional: "job" scores results as job postings
+//   mode           optional: "job" scores results as job postings; search engines use
+//                  "monitor" instead when monitoring mode is on in the options page
 //   reorder        optional: false (or a function returning false) where results must keep the site's order
 //   panel          optional: true shows a side panel ranking every scored result, for sites
 //                  that can't be reordered in place
@@ -280,6 +281,25 @@ let timer = null;
 let queryWaits = 0; // flushes deferred because the page hasn't exposed its query yet
 const MAX_QUERY_WAITS = 10;
 
+// Monitoring mode: search results are sorted into media-monitoring report sections for the
+// client described in the options page. Needs both the switch and a client description.
+let monitorOn = false;
+const settingsReady = chrome.storage.sync
+  .get({ monitorMode: false, monitorProfile: "" })
+  .then((v) => (monitorOn = v.monitorMode && v.monitorProfile.trim() !== ""))
+  .catch(() => {});
+const currentMode = () => engine.mode ?? (monitorOn ? "monitor" : undefined);
+
+const SECTION_LABEL = { exposure: "露出", industry: "產業", stock: "股市・不監測", unrelated: "無關" };
+const TONE_LABEL = { positive: "正面", neutral: "中性", negative: "負面" };
+const TONE_CLASS = { positive: "ls-good", neutral: "ls-cat", negative: "ls-warn" };
+const TOPIC_LABEL = {
+  operations: "營運財務", product: "產品技術", investment: "投資擴廠", partnership: "合作客戶",
+  people: "人事治理", legal: "法律訴訟", policy: "政策法規", market: "市場趨勢",
+  competitor: "競爭對手", esg: "ESG", brand: "品牌活動", other: "其他",
+};
+const monitored = (d) => d.section === "exposure" || d.section === "industry";
+
 const CATEGORY_LABEL = {
   docs: "文件", tutorial: "教學", qa: "問答", news: "新聞",
   research: "研究", blog: "部落格", product: "產品", other: "其他",
@@ -324,6 +344,7 @@ function render(url) {
 
 async function flush() {
   timer = null;
+  await settingsReady;
   const query = engine.query();
   if (!query) {
     // Some sites (104) only fill in their search description after rendering; retry briefly.
@@ -349,7 +370,7 @@ async function flush() {
   for (let i = 0; i < urls.length; i += batchSize) {
     const chunk = urls.slice(i, i + batchSize);
     (engine.content ? collectPages(chunk) : Promise.resolve(undefined)).then((pages) => {
-      chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages, mode: engine.mode }, (resp) => {
+      chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages, mode: currentMode() }, (resp) => {
         for (const url of chunk) {
           results.set(url, resp?.results?.find((x) => x.url === url) ?? { error: resp?.error ?? "no response" });
           render(url);
@@ -412,9 +433,20 @@ function mount(anchor, data) {
     return;
   }
 
+  if (data.kind === "monitor" && !monitored(data)) {
+    // Stock-market and unrelated articles stay out of the report: muted, no passage.
+    box.append(badge(String(data.score), "ls-muted"), badge(SECTION_LABEL[data.section], "ls-muted"));
+    box.title = monitorTooltip(data);
+    return;
+  }
   const tier = data.score >= 70 ? "ls-high" : data.score >= 40 ? "ls-mid" : "ls-low";
   box.append(badge(String(data.score), tier));
-  if (data.kind === "job") {
+  if (data.kind === "monitor") {
+    // Tone is about the client, so it only labels coverage of the client.
+    if (data.section === "exposure") box.append(badge(`露出・${TONE_LABEL[data.tone]}`, TONE_CLASS[data.tone]));
+    else box.append(badge("產業", "ls-cat"));
+    box.append(badge(TOPIC_LABEL[data.topic] ?? data.topic, "ls-cat"));
+  } else if (data.kind === "job") {
     const toneClass = { warn: "ls-warn", good: "ls-good", muted: "ls-muted" };
     if (data.flag) box.append(badge(data.flag.label, toneClass[data.flag.tone] ?? "ls-good"));
   } else {
@@ -424,7 +456,20 @@ function mount(anchor, data) {
     if (data.promotional > 0.6 && data.transactional < 0.5) box.append(badge("銷售頁", "ls-warn"));
   }
   if (data.keyPassage) box.append(passageBlock(data.keyPassage));
-  box.title = data.kind === "job" ? jobTooltip(data) : pageTooltip(data);
+  box.title = data.kind === "job" ? jobTooltip(data) : data.kind === "monitor" ? monitorTooltip(data) : pageTooltip(data);
+}
+
+function monitorTooltip(d) {
+  const PROMINENCE = ["未提及", "順帶提及", "主角之一", "主角"];
+  const IMPORTANCE = ["例行", "背景資訊", "值得一看", "重大"];
+  const level = (v, names) => `${names[Math.round(v)]}（${v.toFixed(1)}/3）`;
+  return [
+    `報告分類：${SECTION_LABEL[d.section]}（${Math.round(d.sectionConfidence * 100)}%）`,
+    `對客戶的語氣：${TONE_LABEL[d.tone]} · 主題：${TOPIC_LABEL[d.topic] ?? d.topic}`,
+    `客戶在報導中：${level(d.prominence, PROMINENCE)}`,
+    `重要性：${level(d.importance, IMPORTANCE)}`,
+    `via ${d.source}`,
+  ].join("\n");
 }
 
 function pageTooltip(d) {

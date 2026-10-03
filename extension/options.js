@@ -1,4 +1,12 @@
-const DEFAULTS = { workerUrl: "http://localhost:8787", token: "dev-token", jobProfile: "", reorder: true, autoTranslate: true };
+const DEFAULTS = {
+  workerUrl: "http://localhost:8787",
+  token: "dev-token",
+  jobProfile: "",
+  reorder: true,
+  autoTranslate: true,
+  monitorMode: false,
+  monitorProfile: "",
+};
 const $ = (id) => document.getElementById(id);
 
 chrome.storage.sync.get(DEFAULTS).then((v) => {
@@ -7,6 +15,8 @@ chrome.storage.sync.get(DEFAULTS).then((v) => {
   $("jobProfile").value = v.jobProfile;
   $("reorder").checked = v.reorder;
   $("autoTranslate").checked = v.autoTranslate;
+  $("monitorMode").checked = v.monitorMode;
+  $("monitorProfile").value = v.monitorProfile;
 });
 
 $("save").onclick = async () => {
@@ -16,6 +26,8 @@ $("save").onclick = async () => {
     jobProfile: $("jobProfile").value.trim(),
     reorder: $("reorder").checked,
     autoTranslate: $("autoTranslate").checked,
+    monitorMode: $("monitorMode").checked,
+    monitorProfile: $("monitorProfile").value.trim(),
   });
   $("status").textContent = "Saved";
 };

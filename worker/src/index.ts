@@ -3,13 +3,15 @@
 // `pages` lets the extension supply content it already has: from a site's own API, for
 // sites that block Browser Run and Jina, or an article it fetched itself in fast mode
 // (marked `via: "browser"`), which is far faster than either.
-// `mode: "job"` scores job postings against the seeker's free-text `profile` instead.
+// `mode: "job"` scores job postings against the seeker's free-text `profile` instead;
+// `mode: "monitor"` sorts news into report sections for the monitoring client in `profile`.
 
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { cleanMarkdown, toPassages } from "./cleanMarkdown";
 import { fetchPage, type Source } from "./fetchPage";
 import { judgeJob, screenedVerdict, triageJobs } from "./jobJudge";
 import { judgePage, searchIntent } from "./judge";
+import { judgeMonitor } from "./monitorJudge";
 
 export interface Env {
   CF_ACCOUNT_ID: string;
@@ -60,19 +62,22 @@ export default {
       profile?: string;
     };
     const jobMode = mode === "job";
-    const profile = jobMode && typeof rawProfile === "string" ? rawProfile.trim().slice(0, MAX_PROFILE_CHARS) : "";
-    // Different profiles score the same job differently, so the profile is part of the cache key.
-    const variant = jobMode ? `job:${(await sha256(profile)).slice(0, 16)}` : "page";
+    const profileMode = jobMode || mode === "monitor";
+    const profile = profileMode && typeof rawProfile === "string" ? rawProfile.trim().slice(0, MAX_PROFILE_CHARS) : "";
     if (!query || !Array.isArray(urls) || urls.length === 0) {
       return json({ error: "body must be { query, urls[] }" }, 400);
     }
+    // Monitoring is judged against the client, so it can't run without one.
+    const monitorMode = mode === "monitor" && profile.length > 0;
+    // Different profiles score the same page differently, so the profile is part of the cache key.
+    const variant = jobMode || monitorMode ? `${mode}:${(await sha256(profile)).slice(0, 16)}` : "page";
 
     const client = new TypeSafeClient({ apiKey: env.TYPESAFE_API_KEY });
     const cache = caches.default;
 
     // Page mode: judge the search's intent once, before the per-page calls that depend on it.
     let transactional = 0;
-    if (!jobMode) {
+    if (!jobMode && !monitorMode) {
       const intentKey = new Request(`https://linkscout.cache/intent/v1?q=${encodeURIComponent(query)}`);
       const hit = await cache.match(intentKey);
       if (hit) {
@@ -146,7 +151,9 @@ export default {
           const passages = toPassages(page.blocks);
           const judged = jobMode
             ? await judgeJob(client, query, profile, url, page.title, page.markdown, passages)
-            : await judgePage(client, query, url, page.title, page.markdown, passages, transactional);
+            : monitorMode
+              ? await judgeMonitor(client, query, profile, url, page.title, page.markdown, passages)
+              : await judgePage(client, query, url, page.title, page.markdown, passages, transactional);
           return save(url, { ...judged, source: page.source });
         } catch (err) {
           return { url, error: err instanceof Error ? err.message : String(err) };

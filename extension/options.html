@@ -20,6 +20,13 @@
 <label><input id="autoTranslate" type="checkbox" style="width:auto" /> 自動把英文重點段落翻成中文</label>
 <p class="hint">使用 Chrome 內建的離線翻譯，不會把文字送出你的電腦。第一次需要在引用框按「翻成中文」下載翻譯模型。</p>
 
+<label><input id="monitorMode" type="checkbox" style="width:auto" /> 新聞監測模式</label>
+<p class="hint">開啟後，搜尋結果改依下方的監測對象分成「露出」（報導客戶本身）、「產業」（客戶所在產業的新聞）、「股市」（股價、盤勢、法人買賣、ETF 等，不監測）和「無關」。股市和無關的結果會淡化並排到最後。關閉時是一般的搜尋評分。</p>
+
+<label for="monitorProfile">監測對象</label>
+<textarea id="monitorProfile" maxlength="2000" placeholder="例：客戶：台積電（TSMC），也常被稱為護國神山。產業：半導體晶圓代工，上下游包括 IC 設計、封裝測試、設備與材料。競爭對手：三星、英特爾。"></textarea>
+<p class="hint">寫客戶的名稱、簡稱或英文名、所屬產業，以及要一併留意的競爭對手或上下游，最多 2000 字。這段文字會送到你的 Worker 和 Jev 判斷；沒填的話，新聞監測模式不會啟用。</p>
+
 <label for="jobProfile">求職條件（104 職缺評分用）</label>
 <textarea id="jobProfile" maxlength="2000" placeholder="例：20 年行政與會計經驗，熟悉 Excel、ERP 系統。希望在台北市中正區或大安區，日班、不輪班，不要粗重工作，月薪 4 萬以上，可接受部分遠端。"></textarea>
 <p class="hint">用自己的話寫背景、專長和期望的工作條件即可，最多 2000 字。這段文字會送到你的 Worker 和 Jev 評分；留空的話，104 只依搜尋條件和中高齡友善程度評分。</p>
