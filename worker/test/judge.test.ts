@@ -24,6 +24,15 @@ describe("judgePage", () => {
     );
   });
 
+  it("asks the news type instead of the category on news searches", async () => {
+    const a = { ...answers(), news_type: { choice: "sponsored", confidence: 0.85 } };
+    const { client, requests } = fakeClient(a);
+    const v = await judgePage(client, "q", "https://example.com", "T", "c", [], 0, true);
+    expect(Object.keys(requests[0].questions)).toContain("news_type");
+    expect(Object.keys(requests[0].questions)).not.toContain("category");
+    expect(v).toMatchObject({ category: "news", newsType: "sponsored", categoryConfidence: 0.85 });
+  });
+
   it("weights relevance 0.65 and depth 0.35", async () => {
     expect((await judge(answers())).score).toBe(100);
     expect((await judge(answers({ rel: 4, dep: 0 }))).score).toBe(65);

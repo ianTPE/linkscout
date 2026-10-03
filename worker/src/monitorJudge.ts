@@ -6,7 +6,7 @@
 // Docs: https://docs.typesafe.ai/api.md
 
 import { choice, score, TypeSafeClient } from "@typesafe-ai/sdk";
-import { keyPassageQuestion } from "./judge";
+import { keyPassageQuestion, newsTypeQuestion, type NewsType } from "./judge";
 
 export const SECTIONS = {
   exposure:
@@ -49,21 +49,33 @@ export interface MonitorVerdict {
   score: number;
   section: Section;
   sectionConfidence: number;
+  /**
+   * Excluded (stock or unrelated) but with low confidence: shown and ranked like industry
+   * news for a human to check, since a wrongly hidden article is worse than an extra one.
+   */
+  uncertain: boolean;
   /** Only meaningful for the exposure section. */
   tone: Tone;
   topic: Topic;
+  newsType: NewsType;
   prominence: number; // 0–3: how central the client is
   importance: number; // 0–3
   keyPassage: string | null;
 }
 
-/** Report sections first: exposure ranks above industry news; excluded articles sink to the bottom. */
-export function monitorScore(section: Section, importance: number, prominence: number): number {
+/** Below this confidence, an article judged out of the report still shows, marked for checking. */
+export const UNCERTAIN_BELOW = 0.5;
+
+/**
+ * Report sections first: exposure ranks above industry news; excluded articles sink to the
+ * bottom, unless the exclusion is uncertain (then they rank like industry news).
+ */
+export function monitorScore(section: Section, importance: number, prominence: number, uncertain = false): number {
   const imp = importance / 3;
   const prom = prominence / 3;
   const v =
     section === "exposure" ? 0.4 + 0.6 * (0.6 * imp + 0.4 * prom)
-    : section === "industry" ? 0.2 + 0.6 * imp
+    : section === "industry" || uncertain ? 0.2 + 0.6 * imp
     : 0.1 * imp;
   return Math.round(v * 100);
 }
@@ -98,6 +110,7 @@ export async function judgeMonitor(
       ),
       tone: choice("How does the article in `page.content` portray the company in `monitoring_client`?", TONES),
       topic: choice("What is the main topic of the article in `page.content`?", TOPICS),
+      news_type: newsTypeQuestion(),
       prominence: score(
         "How central is the company in `monitoring_client` to the article in `page.content`?",
         [
@@ -125,14 +138,17 @@ export async function judgeMonitor(
   });
 
   const section = answers.section.choice as Section;
+  const uncertain = (section === "stock" || section === "unrelated") && answers.section.confidence < UNCERTAIN_BELOW;
   return {
     url,
     kind: "monitor",
-    score: monitorScore(section, answers.importance.score, answers.prominence.score),
+    score: monitorScore(section, answers.importance.score, answers.prominence.score, uncertain),
     section,
     sectionConfidence: answers.section.confidence,
+    uncertain,
     tone: answers.tone.choice as Tone,
     topic: answers.topic.choice as Topic,
+    newsType: answers.news_type.choice as NewsType,
     prominence: answers.prominence.score,
     importance: answers.importance.score,
     keyPassage: passage.pick(answers.key_passage.choice),

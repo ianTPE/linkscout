@@ -18,6 +18,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           query: msg.query,
           urls: msg.urls,
           pages: msg.pages,
+          news: msg.news === true,
           // Each profile only goes along in its own mode: the job profile for job sites,
           // the monitoring client for search pages in monitoring mode.
           ...(msg.mode === "job" ? { mode: "job", profile: jobProfile } : {}),

@@ -17,6 +17,23 @@ const CATEGORIES = {
 
 export type Category = keyof typeof CATEGORIES;
 
+/**
+ * On news searches every result is "news", so the page category says nothing there.
+ * What kind of news it is does: original reporting, a reprinted press release, or paid content.
+ */
+export const NEWS_TYPES = {
+  report: "News report: original reporting by the outlet's own journalists",
+  analysis: "Analysis, commentary, column, or editorial",
+  press_release:
+    "Press release: mostly reproduces a statement or release from a company or government agency, with little added reporting",
+  sponsored: "Sponsored or advertorial content: a paid placement promoting a product, company, or service",
+  aggregated: "Aggregated or rewritten from other media: a roundup, a repost, or a content-farm rewrite",
+  other: "Not a news article",
+} as const;
+export type NewsType = keyof typeof NEWS_TYPES;
+
+export const newsTypeQuestion = () => choice("What kind of article is `page.content`?", NEWS_TYPES);
+
 export interface Verdict {
   url: string;
   /** 0–100, computed in code from the raw judgments below. */
@@ -29,6 +46,8 @@ export interface Verdict {
   transactional: number;
   category: Category;
   categoryConfidence: number;
+  /** Asked instead of the category on news searches. */
+  newsType?: NewsType;
   keyPassage: string | null;
 }
 
@@ -40,6 +59,7 @@ export async function judgePage(
   markdown: string,
   passages: string[],
   transactional: number,
+  news = false,
 ): Promise<Verdict> {
   const state = {
     search_query: query,
@@ -69,7 +89,9 @@ export async function judgePage(
       promotional: noul(
         "Is `page.content` mainly a sales, product, pricing, or marketing page whose purpose is to sell something?",
       ),
-      category: choice("What kind of page is `page.content`?", CATEGORIES),
+      ...(news
+        ? { news_type: newsTypeQuestion() }
+        : { category: choice("What kind of page is `page.content`?", CATEGORIES) }),
       key_passage: passage.question,
     },
   });
@@ -89,8 +111,13 @@ export async function judgePage(
     seoSpam: answers.seo_spam.noul,
     promotional: answers.promotional.noul,
     transactional,
-    category: answers.category.choice as Category,
-    categoryConfidence: answers.category.confidence,
+    ...("news_type" in answers
+      ? {
+          category: "news" as const,
+          categoryConfidence: answers.news_type.confidence,
+          newsType: answers.news_type.choice as NewsType,
+        }
+      : { category: answers.category.choice as Category, categoryConfidence: answers.category.confidence }),
     keyPassage: passage.pick(answers.key_passage.choice),
   };
 }

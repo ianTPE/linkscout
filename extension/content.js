@@ -10,6 +10,8 @@
 //   mode           optional: "job" scores results as job postings; search engines use
 //                  "monitor" instead when monitoring mode is on in the options page
 //   reorder        optional: false (or a function returning false) where results must keep the site's order
+//   news()         optional: true on the site's news search, where every result is news, so
+//                  results get a news type (report, press release, sponsored…) instead of a category
 //   panel          optional: true shows a side panel ranking every scored result, for sites
 //                  that can't be reordered in place
 //   meta(a)        optional: { title, sub } for a result's panel row; default is the link text
@@ -26,6 +28,7 @@ const GOOGLE = {
   query: param("q"),
   links: () => (isGoogleNews() ? '#search a:has([role="heading"])' : "#search a:has(h3)"),
   keepGroups: isGoogleNews,
+  news: isGoogleNews,
   content: fetchArticle,
 };
 
@@ -36,6 +39,7 @@ const ENGINES = {
     query: param("q"),
     // News (/news/search) is a plain list of .news-card items with direct article links.
     links: () => (location.pathname.startsWith("/news/") ? "#algocore .news-card a.title" : "#b_results li.b_algo h2 a"),
+    news: () => location.pathname.startsWith("/news/"),
     content: fetchArticle,
   },
   "duckduckgo.com": {
@@ -45,6 +49,7 @@ const ENGINES = {
       param("ia")() === "news"
         ? '[data-testid="news-vertical"] li > article > a[href^="http"]'
         : 'a[data-testid="result-title-a"]',
+    news: () => param("ia")() === "news",
     content: fetchArticle,
   },
   "www.104.com.tw": {
@@ -298,7 +303,16 @@ const TOPIC_LABEL = {
   people: "人事治理", legal: "法律訴訟", policy: "政策法規", market: "市場趨勢",
   competitor: "競爭對手", esg: "ESG", brand: "品牌活動", other: "其他",
 };
-const monitored = (d) => d.section === "exposure" || d.section === "industry";
+const NEWS_TYPE_LABEL = {
+  report: "報導", analysis: "分析評論", press_release: "新聞稿",
+  sponsored: "業配廣編", aggregated: "彙整轉載", other: "非新聞",
+};
+// Paid or reprinted content is worth a second look in a report; the rest is plain context.
+const NEWS_TYPE_CLASS = { sponsored: "ls-warn", press_release: "ls-muted", aggregated: "ls-muted" };
+const newsTypeBadge = (t) => badge(NEWS_TYPE_LABEL[t] ?? t, NEWS_TYPE_CLASS[t] ?? "ls-cat");
+
+// Uncertain exclusions stay visible for a human to check: hiding a real article costs more.
+const monitored = (d) => d.section === "exposure" || d.section === "industry" || d.uncertain;
 
 const CATEGORY_LABEL = {
   docs: "文件", tutorial: "教學", qa: "問答", news: "新聞",
@@ -370,7 +384,8 @@ async function flush() {
   for (let i = 0; i < urls.length; i += batchSize) {
     const chunk = urls.slice(i, i + batchSize);
     (engine.content ? collectPages(chunk) : Promise.resolve(undefined)).then((pages) => {
-      chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages, mode: currentMode() }, (resp) => {
+      const news = engine.news?.() ?? false;
+      chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages, mode: currentMode(), news }, (resp) => {
         for (const url of chunk) {
           results.set(url, resp?.results?.find((x) => x.url === url) ?? { error: resp?.error ?? "no response" });
           render(url);
@@ -444,13 +459,15 @@ function mount(anchor, data) {
   if (data.kind === "monitor") {
     // Tone is about the client, so it only labels coverage of the client.
     if (data.section === "exposure") box.append(badge(`露出・${TONE_LABEL[data.tone]}`, TONE_CLASS[data.tone]));
-    else box.append(badge("產業", "ls-cat"));
+    else if (data.section === "industry") box.append(badge("產業", "ls-cat"));
+    else box.append(badge(`${data.section === "stock" ? "股市" : "無關"}？待確認`, "ls-warn"));
     box.append(badge(TOPIC_LABEL[data.topic] ?? data.topic, "ls-cat"));
+    if (data.newsType) box.append(newsTypeBadge(data.newsType));
   } else if (data.kind === "job") {
     const toneClass = { warn: "ls-warn", good: "ls-good", muted: "ls-muted" };
     if (data.flag) box.append(badge(data.flag.label, toneClass[data.flag.tone] ?? "ls-good"));
   } else {
-    box.append(badge(CATEGORY_LABEL[data.category] ?? data.category, "ls-cat"));
+    box.append(data.newsType ? newsTypeBadge(data.newsType) : badge(CATEGORY_LABEL[data.category] ?? data.category, "ls-cat"));
     if (data.seoSpam > 0.6) box.append(badge("SEO", "ls-spam"));
     // A sales page is only worth flagging when the search isn't about buying.
     if (data.promotional > 0.6 && data.transactional < 0.5) box.append(badge("銷售頁", "ls-warn"));
@@ -464,8 +481,8 @@ function monitorTooltip(d) {
   const IMPORTANCE = ["例行", "背景資訊", "值得一看", "重大"];
   const level = (v, names) => `${names[Math.round(v)]}（${v.toFixed(1)}/3）`;
   return [
-    `報告分類：${SECTION_LABEL[d.section]}（${Math.round(d.sectionConfidence * 100)}%）`,
-    `對客戶的語氣：${TONE_LABEL[d.tone]} · 主題：${TOPIC_LABEL[d.topic] ?? d.topic}`,
+    `報告分類：${SECTION_LABEL[d.section]}（${Math.round(d.sectionConfidence * 100)}%）${d.uncertain ? "，把握度低，請人工確認" : ""}`,
+    `對客戶的語氣：${TONE_LABEL[d.tone]} · 主題：${TOPIC_LABEL[d.topic] ?? d.topic}${d.newsType ? ` · 類型：${NEWS_TYPE_LABEL[d.newsType] ?? d.newsType}` : ""}`,
     `客戶在報導中：${level(d.prominence, PROMINENCE)}`,
     `重要性：${level(d.importance, IMPORTANCE)}`,
     `via ${d.source}`,
