@@ -24,7 +24,11 @@ const GOOGLE = {
 const ENGINES = {
   "www.google.com": GOOGLE,
   "www.google.com.tw": GOOGLE,
-  "www.bing.com": { query: param("q"), links: "#b_results li.b_algo h2 a" },
+  "www.bing.com": {
+    query: param("q"),
+    // News (/news/search) is a plain list of .news-card items with direct article links.
+    links: () => (location.pathname.startsWith("/news/") ? "#algocore .news-card a.title" : "#b_results li.b_algo h2 a"),
+  },
   "duckduckgo.com": { query: param("q"), links: 'a[data-testid="result-title-a"]' },
   "www.104.com.tw": {
     query: query104,
