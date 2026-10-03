@@ -12,9 +12,9 @@
 //   reorder        optional: false (or a function returning false) where results must keep the site's order
 //   news()         optional: true on the site's news search, where every result is news, so
 //                  results get a news type (report, press release, sponsored…) instead of a category
-//   panel          optional: true shows a side panel ranking every scored result, for sites
-//                  that can't be reordered in place
-//   meta(a)        optional: { title, sub } for a result's panel row; default is the link text
+//   panel          optional: true shows a side panel ranking every scored result (needed on
+//                  sites that can't be reordered in place; elsewhere a scannable summary)
+//   meta(a, url)   optional: { title, sub } for a result's panel row; default is the link text
 //   keepGroups     optional: true (or a function) to sort a block of several results as one unit,
 //                  by its best score, without touching its inside
 
@@ -30,6 +30,12 @@ const GOOGLE = {
   keepGroups: isGoogleNews,
   news: isGoogleNews,
   content: fetchArticle,
+  panel: true,
+  // The link also holds the site name and breadcrumbs; the heading alone is the title.
+  meta: (a, url) => ({
+    title: (a.querySelector('h3, [role="heading"]') ?? a).textContent.trim(),
+    sub: new URL(url).hostname.replace(/^www\./, ""),
+  }),
 };
 
 const ENGINES = {
@@ -338,7 +344,7 @@ function scan() {
     const url = realUrl(a);
     if (!url || !/^https?:/.test(url) || shown.get(a) === url) continue;
     shown.set(a, url);
-    if (!meta.has(url)) meta.set(url, engine.meta ? engine.meta(a) : { title: a.textContent.trim(), sub: "" });
+    if (!meta.has(url)) meta.set(url, engine.meta ? engine.meta(a, url) : { title: a.textContent.trim(), sub: "" });
     if (!results.has(url)) {
       results.set(url, { loading: true });
       pending.add(url);
@@ -358,6 +364,7 @@ function render(url) {
 
 async function flush() {
   timer = null;
+  if (!alive()) return;
   await settingsReady;
   const query = engine.query();
   if (!query) {
@@ -386,8 +393,13 @@ async function flush() {
     (engine.content ? collectPages(chunk) : Promise.resolve(undefined)).then((pages) => {
       const news = engine.news?.() ?? false;
       chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages, mode: currentMode(), news }, (resp) => {
+        // No response: the extension was reloaded mid-request (this page now runs a dead copy
+        // of the script), or the background failed; lastError says which.
+        const lost = alive()
+          ? chrome.runtime.lastError?.message ?? "no response"
+          : "擴充功能已重新載入，請重新整理頁面";
         for (const url of chunk) {
-          results.set(url, resp?.results?.find((x) => x.url === url) ?? { error: resp?.error ?? "no response" });
+          results.set(url, resp?.results?.find((x) => x.url === url) ?? { error: resp?.error ?? lost });
           render(url);
         }
         applyOrder();
@@ -458,9 +470,7 @@ function mount(anchor, data) {
   box.append(badge(String(data.score), tier));
   if (data.kind === "monitor") {
     // Tone is about the client, so it only labels coverage of the client.
-    if (data.section === "exposure") box.append(badge(`露出・${TONE_LABEL[data.tone]}`, TONE_CLASS[data.tone]));
-    else if (data.section === "industry") box.append(badge("產業", "ls-cat"));
-    else box.append(badge(`${data.section === "stock" ? "股市" : "無關"}？待確認`, "ls-warn"));
+    box.append(sectionBadge(data));
     box.append(badge(TOPIC_LABEL[data.topic] ?? data.topic, "ls-cat"));
     if (data.newsType) box.append(newsTypeBadge(data.newsType));
   } else if (data.kind === "job") {
@@ -474,6 +484,14 @@ function mount(anchor, data) {
   }
   if (data.keyPassage) box.append(passageBlock(data.keyPassage));
   box.title = data.kind === "job" ? jobTooltip(data) : data.kind === "monitor" ? monitorTooltip(data) : pageTooltip(data);
+}
+
+/** The report-section badge for a monitored article: 露出・tone, 產業, or 待確認. */
+function sectionBadge(d) {
+  if (d.section === "exposure") return badge(`露出・${TONE_LABEL[d.tone]}`, TONE_CLASS[d.tone]);
+  if (d.section === "industry") return badge("產業", "ls-cat");
+  if (d.uncertain) return badge(`${d.section === "stock" ? "股市" : "無關"}？待確認`, "ls-warn");
+  return badge(SECTION_LABEL[d.section], "ls-muted");
 }
 
 function monitorTooltip(d) {
@@ -735,8 +753,9 @@ function showToast(moved) {
 }
 
 // ---------------------------------------------------------------------------
-// Ranking panel, for sites whose list can't be reordered in place (104's virtual list).
-// It lists every result scored so far, best first, and never touches the site's own list.
+// Ranking panel: every result scored so far, best first, without touching the site's own
+// list. On 104 it is the only ranking (its virtual list can't be reordered); on Google it is
+// a compact overview next to the reordered results.
 // ---------------------------------------------------------------------------
 
 let panel = null;
@@ -774,7 +793,7 @@ function drawPanel() {
   head.textContent = `${panelCollapsed ? "▸" : "▾"} LinkScout 排行（${ranked.length}${loading ? `，評分中 ${loading}` : ""}）`;
   head.onclick = () => {
     panelCollapsed = !panelCollapsed;
-    chrome.storage.local.set({ panelCollapsed });
+    if (alive()) chrome.storage.local.set({ panelCollapsed });
     drawPanel();
   };
   panel.classList.toggle("ls-collapsed", panelCollapsed);
@@ -788,7 +807,7 @@ function drawPanel() {
   const notes = [
     screened.length && `初篩略過 ${screened.length} 筆（列在最後）`,
     failed && `無法讀取 ${failed} 筆`,
-    "只包含捲動時出現過的職缺；往下捲會繼續加入。",
+    engine.mode === "job" ? "只包含捲動時出現過的職缺；往下捲會繼續加入。" : "只包含這一頁的結果。",
   ].filter(Boolean);
   panel.replaceChildren(head, list, panelNote(notes.join(" · ")));
 }
@@ -799,7 +818,8 @@ function panelRow({ url, r, m }) {
   row.href = url;
   row.target = "_blank";
   row.rel = "noopener";
-  const tier = r.screened ? "ls-muted" : r.score >= 70 ? "ls-high" : r.score >= 40 ? "ls-mid" : "ls-low";
+  const excluded = r.kind === "monitor" && !monitored(r);
+  const tier = r.screened || excluded ? "ls-muted" : r.score >= 70 ? "ls-high" : r.score >= 40 ? "ls-mid" : "ls-low";
   const text = document.createElement("span");
   text.className = "ls-panel-text";
   const title = document.createElement("span");
@@ -815,6 +835,8 @@ function panelRow({ url, r, m }) {
   row.append(badge(String(r.score), tier), text);
   const toneClass = { warn: "ls-warn", good: "ls-good", muted: "ls-muted" };
   if (r.flag) row.append(badge(r.flag.label, toneClass[r.flag.tone] ?? "ls-good"));
+  if (r.kind === "monitor") row.append(sectionBadge(r));
+  else if (r.newsType) row.append(newsTypeBadge(r.newsType));
   if (r.keyPassage) row.title = r.keyPassage;
   return row;
 }
@@ -826,5 +848,11 @@ function panelNote(text) {
   return p;
 }
 
+// When the extension is reloaded or updated, this script keeps running in tabs that were
+// already open, but every chrome.* call now throws "Extension context invalidated".
+// Stop quietly instead; the page's next load gets the new script.
+const alive = () => !!chrome.runtime?.id;
+
 scan();
-new MutationObserver(scan).observe(document.body, { childList: true, subtree: true });
+const observer = new MutationObserver(() => (alive() ? scan() : observer.disconnect()));
+observer.observe(document.body, { childList: true, subtree: true });
