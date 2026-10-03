@@ -1,6 +1,10 @@
-# linkscout
+<p align="center">
+  <img src="extension/icons/logo.svg" alt="LinkScout logo" width="96" height="96">
+</p>
 
-Scores the links on a search results page before you click them.
+<h1 align="center">LinkScout</h1>
+
+<p align="center">Scores the links on a search results page before you click them.</p>
 
 ```
 Search page (extension)  ──urls+query──▶  Worker /score
