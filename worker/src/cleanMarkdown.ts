@@ -1,0 +1,118 @@
+// Turn a rendered page's Markdown into the part a reader actually came for:
+// drop front matter, site navigation before the article, and link-dense blocks
+// (menus, footers, "related" lists), while keeping code blocks intact.
+
+export interface Block {
+  text: string;
+  code: boolean;
+}
+
+export interface CleanPage {
+  title: string;
+  markdown: string;
+  blocks: Block[];
+}
+
+/** Share of a block's visible text that is link text, above which it counts as navigation. */
+const MAX_LINK_DENSITY = 0.6;
+
+export function cleanMarkdown(raw: string, fallbackTitle = ""): CleanPage {
+  let { title, body } = splitFrontMatter(raw);
+  title ||= fallbackTitle;
+
+  const blocks = splitBlocks(skipToArticle(body, title)).filter(
+    (b) => b.code || (visibleText(b.text).length > 0 && linkDensity(b.text) <= MAX_LINK_DENSITY),
+  );
+  return { title, markdown: blocks.map((b) => b.text).join("\n\n"), blocks };
+}
+
+/** Readable paragraph candidates for "show the key passage". */
+export function toPassages(blocks: Block[], max = 40): string[] {
+  return blocks
+    .filter((b) => !b.code && !looksLikeCode(b.text))
+    .map((b) => b.text.trim())
+    .filter((p) => visibleText(p).length >= 80 && !/^[#!|>]/.test(p)) // skip headings, images, tables, quotes
+    .slice(0, max)
+    .map((p) => (p.length > 600 ? `${p.slice(0, 600)}…` : p));
+}
+
+function splitFrontMatter(raw: string): { title: string; body: string } {
+  const m = raw.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!m) return { title: "", body: raw };
+  const title = m[1].match(/^title:\s*"?(.*?)"?\s*$/m)?.[1] ?? "";
+  return { title, body: raw.slice(m[0].length) };
+}
+
+/**
+ * Start at the first H1 whose text appears in the page title, e.g. "# MutationObserver"
+ * in "MutationObserver - Web APIs | MDN". Earlier H1s (sign-up modals, site logos) don't match.
+ */
+function skipToArticle(body: string, title: string): string {
+  if (!title) return body;
+  const wanted = normalize(title);
+  const lines = body.split("\n");
+  const start = lines.findIndex((line) => {
+    const h1 = line.match(/^#\s+(.*)/)?.[1];
+    if (!h1) return false;
+    const text = normalize(visibleText(h1));
+    return text.length >= 4 && wanted.includes(text);
+  });
+  return start > 0 ? lines.slice(start).join("\n") : body;
+}
+
+/** Split on blank lines, but never inside a ``` fence, so code stays one block. */
+function splitBlocks(body: string): Block[] {
+  const blocks: Block[] = [];
+  let current: string[] = [];
+  let inFence = false;
+
+  const flush = (code: boolean) => {
+    const text = current.join("\n").trim();
+    if (text) blocks.push({ text, code });
+    current = [];
+  };
+
+  for (const line of body.split("\n")) {
+    if (/^\s*```/.test(line)) {
+      if (!inFence) flush(false);
+      current.push(line);
+      if (inFence) flush(true);
+      inFence = !inFence;
+    } else if (!inFence && line.trim() === "") {
+      flush(false);
+    } else {
+      current.push(line);
+    }
+  }
+  flush(inFence);
+  return blocks;
+}
+
+/** Text a reader would see: images removed, links reduced to their label. */
+function visibleText(md: string): string {
+  return md
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/[*_`#>|-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function linkDensity(md: string): number {
+  const visible = visibleText(md).length;
+  if (visible === 0) return 1;
+  const linked = [...md.replace(/!\[[^\]]*\]\([^)]*\)/g, "").matchAll(/\[([^\]]*)\]\([^)]*\)/g)]
+    .reduce((n, m) => n + visibleText(m[1]).length, 0);
+  return linked / visible;
+}
+
+/** Unfenced code, e.g. indented snippets: most lines end in ; { } or are // comments. */
+function looksLikeCode(text: string): boolean {
+  const lines = text.split("\n").filter((l) => l.trim());
+  const codey = lines.filter((l) => /[;{}(]\s*$|^\s*(\/\/|\/\*|\*)/.test(l)).length;
+  return lines.length > 0 && codey / lines.length > 0.4;
+}
+
+function normalize(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}

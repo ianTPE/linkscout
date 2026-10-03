@@ -32,12 +32,13 @@ export async function judgePage(
   client: TypeSafeClient,
   query: string,
   url: string,
+  title: string,
   markdown: string,
   passages: string[],
 ): Promise<Verdict> {
   const state = {
     search_query: query,
-    page: { url, content: markdown.slice(0, 12_000) },
+    page: { url, title, content: markdown.slice(0, 12_000) },
   };
 
   // Passage selection is a Choice over candidates found in code ("select, don't generate").

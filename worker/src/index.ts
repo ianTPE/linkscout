@@ -1,7 +1,8 @@
 // POST /score  { query: string, urls: string[] }  →  { results: (Verdict | { url, error })[] }
 
 import { TypeSafeClient } from "@typesafe-ai/sdk";
-import { fetchMarkdown, toPassages, type Source } from "./fetchPage";
+import { toPassages } from "./cleanMarkdown";
+import { fetchPage, type Source } from "./fetchPage";
 import { judgePage, type Verdict } from "./judge";
 
 export interface Env {
@@ -46,14 +47,17 @@ export default {
       urls.slice(0, MAX_URLS).map(async (url) => {
         // Cache per (query, url) so re-opening the same SERP is free.
         const key = new Request(
-          `https://linkscout.cache/v2?q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`,
+          `https://linkscout.cache/v3?q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`,
         );
         const hit = await cache.match(key);
         if (hit) return (await hit.json()) as Verdict & { source: Source };
 
         try {
-          const { markdown, source } = await fetchMarkdown(env, url);
-          const verdict = { ...(await judgePage(client, query, url, markdown, toPassages(markdown))), source };
+          const page = await fetchPage(env, url);
+          const verdict = {
+            ...(await judgePage(client, query, url, page.title, page.markdown, toPassages(page.blocks))),
+            source: page.source,
+          };
           ctx.waitUntil(
             cache.put(key, new Response(JSON.stringify(verdict), {
               headers: { "Cache-Control": `max-age=${CACHE_TTL_S}` },
