@@ -2,6 +2,8 @@
 // and the shared token never touches the search page. In fast mode it also fetches
 // result pages directly, for the content script to extract their text.
 
+importScripts("i18n.js");
+
 const DEFAULTS = { workerUrl: "http://localhost:8787", token: "dev-token", jobProfile: "", monitorProfile: "" };
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -28,7 +30,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (!res.ok) throw new Error(`Worker ${res.status}: ${await res.text()}`);
       sendResponse(await res.json());
     } catch (err) {
-      sendResponse({ error: err?.name === "TimeoutError" ? "逾時：Worker 60 秒內沒有回應" : String(err) });
+      sendResponse({ error: err?.name === "TimeoutError" ? L("timeout") : String(err) });
     }
   })();
   return true; // keep the channel open for the async response

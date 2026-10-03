@@ -23,7 +23,7 @@
         "https://duckduckgo.com/*",
         "https://www.104.com.tw/jobs/search*"
       ],
-      "js": ["vendor/Readability.js", "content.js"],
+      "js": ["vendor/Readability.js", "i18n.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

@@ -303,35 +303,22 @@ const MAX_QUERY_WAITS = 10;
 // Monitoring mode: search results are sorted into media-monitoring report sections for the
 // client described in the options page. Needs both the switch and a client description.
 let monitorOn = false;
-const settingsReady = chrome.storage.sync
-  .get({ monitorMode: false, monitorProfile: "" })
-  .then((v) => (monitorOn = v.monitorMode && v.monitorProfile.trim() !== ""))
-  .catch(() => {});
+const settingsReady = Promise.all([
+  i18nReady,
+  chrome.storage.sync
+    .get({ monitorMode: false, monitorProfile: "" })
+    .then((v) => (monitorOn = v.monitorMode && v.monitorProfile.trim() !== ""))
+    .catch(() => {}),
+]);
 const currentMode = () => engine.mode ?? (monitorOn ? "monitor" : undefined);
 
-const SECTION_LABEL = { exposure: "露出", industry: "產業", stock: "股市・不監測", unrelated: "無關" };
-const TONE_LABEL = { positive: "正面", neutral: "中性", negative: "負面" };
 const TONE_CLASS = { positive: "ls-good", neutral: "ls-cat", negative: "ls-warn" };
-const TOPIC_LABEL = {
-  operations: "營運財務", product: "產品技術", investment: "投資擴廠", partnership: "合作客戶",
-  people: "人事治理", legal: "法律訴訟", policy: "政策法規", market: "市場趨勢",
-  competitor: "競爭對手", esg: "ESG", brand: "品牌活動", other: "其他",
-};
-const NEWS_TYPE_LABEL = {
-  report: "報導", analysis: "分析評論", press_release: "新聞稿",
-  sponsored: "業配廣編", aggregated: "彙整轉載", other: "非新聞",
-};
 // Paid or reprinted content is worth a second look in a report; the rest is plain context.
 const NEWS_TYPE_CLASS = { sponsored: "ls-warn", press_release: "ls-muted", aggregated: "ls-muted" };
-const newsTypeBadge = (t) => badge(NEWS_TYPE_LABEL[t] ?? t, NEWS_TYPE_CLASS[t] ?? "ls-cat");
+const newsTypeBadge = (t) => badge(label("newsType", t), NEWS_TYPE_CLASS[t] ?? "ls-cat");
 
 // Uncertain exclusions stay visible for a human to check: hiding a real article costs more.
 const monitored = (d) => d.section === "exposure" || d.section === "industry" || d.uncertain;
-
-const CATEGORY_LABEL = {
-  docs: "文件", tutorial: "教學", qa: "問答", news: "新聞",
-  research: "研究", blog: "部落格", product: "產品", other: "其他",
-};
 
 function realUrl(a) {
   try {
@@ -381,7 +368,7 @@ async function flush() {
       timer = setTimeout(flush, 500);
     } else {
       for (const url of pending) {
-        results.set(url, { error: "找不到搜尋條件" });
+        results.set(url, { error: L("noQuery") });
         render(url);
       }
       pending = new Set();
@@ -405,7 +392,7 @@ async function flush() {
         // of the script), or the background failed; lastError says which.
         const lost = alive()
           ? chrome.runtime.lastError?.message ?? "no response"
-          : "擴充功能已重新載入，請重新整理頁面";
+          : L("reloaded");
         for (const url of chunk) {
           results.set(url, resp?.results?.find((x) => x.url === url) ?? { error: resp?.error ?? lost });
           render(url);
@@ -463,14 +450,14 @@ function mount(anchor, data) {
     return;
   }
   if (data.error) {
-    box.append(badge("無法讀取", "ls-error"));
+    box.append(badge(L("unreadable"), "ls-error"));
     box.title = data.error;
     return;
   }
 
   if (data.kind === "monitor" && !monitored(data)) {
     // Stock-market and unrelated articles stay out of the report: muted, no passage.
-    box.append(badge(String(data.score), "ls-muted"), badge(SECTION_LABEL[data.section], "ls-muted"));
+    box.append(badge(String(data.score), "ls-muted"), badge(label("section", data.section), "ls-muted"));
     box.title = monitorTooltip(data);
     return;
   }
@@ -479,65 +466,67 @@ function mount(anchor, data) {
   if (data.kind === "monitor") {
     // Tone is about the client, so it only labels coverage of the client.
     box.append(sectionBadge(data));
-    box.append(badge(TOPIC_LABEL[data.topic] ?? data.topic, "ls-cat"));
+    box.append(badge(label("topic", data.topic), "ls-cat"));
     if (data.newsType) box.append(newsTypeBadge(data.newsType));
   } else if (data.kind === "job") {
-    const toneClass = { warn: "ls-warn", good: "ls-good", muted: "ls-muted" };
-    if (data.flag) box.append(badge(data.flag.label, toneClass[data.flag.tone] ?? "ls-good"));
+    if (data.flag) box.append(flagBadge(data.flag));
   } else {
-    box.append(data.newsType ? newsTypeBadge(data.newsType) : badge(CATEGORY_LABEL[data.category] ?? data.category, "ls-cat"));
+    box.append(data.newsType ? newsTypeBadge(data.newsType) : badge(label("category", data.category), "ls-cat"));
     if (data.seoSpam > 0.6) box.append(badge("SEO", "ls-spam"));
     // A sales page is only worth flagging when the search isn't about buying.
-    if (data.promotional > 0.6 && data.transactional < 0.5) box.append(badge("銷售頁", "ls-warn"));
+    if (data.promotional > 0.6 && data.transactional < 0.5) box.append(badge(L("salesPage"), "ls-warn"));
   }
   if (data.keyPassage) box.append(passageBlock(data.keyPassage));
   box.title = data.kind === "job" ? jobTooltip(data) : data.kind === "monitor" ? monitorTooltip(data) : pageTooltip(data);
 }
 
-/** The report-section badge for a monitored article: 露出・tone, 產業, or 待確認. */
+/** The report-section badge for a monitored article: exposure · tone, industry, or "check". */
 function sectionBadge(d) {
-  if (d.section === "exposure") return badge(`露出・${TONE_LABEL[d.tone]}`, TONE_CLASS[d.tone]);
-  if (d.section === "industry") return badge("產業", "ls-cat");
-  if (d.uncertain) return badge(`${d.section === "stock" ? "股市" : "無關"}？待確認`, "ls-warn");
-  return badge(SECTION_LABEL[d.section], "ls-muted");
+  if (d.section === "exposure") return badge(L("exposureTone", label("tone", d.tone)), TONE_CLASS[d.tone]);
+  if (d.section === "industry") return badge(label("section", "industry"), "ls-cat");
+  if (d.uncertain) return badge(L("uncertain", label("sectionShort", d.section)), "ls-warn");
+  return badge(label("section", d.section), "ls-muted");
 }
 
+/** A 104 job's flag. Flags cached before the Worker sent `key` only have the Chinese label. */
+function flagBadge(flag) {
+  const toneClass = { warn: "ls-warn", good: "ls-good", muted: "ls-muted" };
+  return badge(flag.key ? label("flag", flag.key) : flag.label, toneClass[flag.tone] ?? "ls-good");
+}
+
+const pct = (v) => `${Math.round(v * 100)}%`;
+
 function monitorTooltip(d) {
-  const PROMINENCE = ["未提及", "順帶提及", "主角之一", "主角"];
-  const IMPORTANCE = ["例行", "背景資訊", "值得一看", "重大"];
-  const level = (v, names) => `${names[Math.round(v)]}（${v.toFixed(1)}/3）`;
+  const level = (v, names) => L("level", L(names)[Math.round(v)], v.toFixed(1));
   return [
-    `報告分類：${SECTION_LABEL[d.section]}（${Math.round(d.sectionConfidence * 100)}%）${d.uncertain ? "，把握度低，請人工確認" : ""}`,
-    `對客戶的語氣：${TONE_LABEL[d.tone]} · 主題：${TOPIC_LABEL[d.topic] ?? d.topic}${d.newsType ? ` · 類型：${NEWS_TYPE_LABEL[d.newsType] ?? d.newsType}` : ""}`,
-    `客戶在報導中：${level(d.prominence, PROMINENCE)}`,
-    `重要性：${level(d.importance, IMPORTANCE)}`,
+    L("reportSection", label("section", d.section), pct(d.sectionConfidence), d.uncertain),
+    L("toneTopic", label("tone", d.tone), label("topic", d.topic), d.newsType && label("newsType", d.newsType)),
+    L("prominence", level(d.prominence, "prominenceLevels")),
+    L("importance", level(d.importance, "importanceLevels")),
     `via ${d.source}`,
   ].join("\n");
 }
 
 function pageTooltip(d) {
-  const pct = (v) => `${Math.round(v * 100)}%`;
   return [
-    `相關度 ${d.relevance.toFixed(1)}/4 · 內容深度 ${d.depth.toFixed(1)}/3`,
-    `SEO 灌水 ${pct(d.seoSpam)} · 銷售頁 ${pct(d.promotional ?? 0)}`,
-    `搜尋意圖：${(d.transactional ?? 0) >= 0.5 ? "購物／找店家（不扣銷售頁分數）" : "查資料"}（${pct(d.transactional ?? 0)}）`,
+    L("relevanceDepth", d.relevance.toFixed(1), d.depth.toFixed(1)),
+    L("spamSales", pct(d.seoSpam), pct(d.promotional ?? 0)),
+    L("intent", (d.transactional ?? 0) >= 0.5, pct(d.transactional ?? 0)),
     `via ${d.source}`,
   ].join("\n");
 }
 
 function jobTooltip(d) {
-  if (d.screened) {
-    return `職稱初篩：從職稱、公司、地點看，跟你的求職條件明顯不符（${Math.round(d.plausible * 100)}%），所以沒有做完整評分。`;
-  }
-  const n = (v, max) => (v == null ? "—（未填求職條件）" : `${v.toFixed(1)}/${max}`);
-  const pct = (v) => `${Math.round(v * 100)}%`;
+  if (d.screened) return L("screenedJob", pct(d.plausible));
+  const n = (v, max) => (v == null ? L("noProfile") : `${v.toFixed(1)}/${max}`);
+  const f = d.flags;
   return [
-    `能力吻合 ${n(d.skillsFit, 4)}`,
-    `想做的工作 ${d.skillsFit != null && d.interestFit == null ? "—（求職條件沒寫想做的工作）" : n(d.interestFit, 4)}`,
-    `條件符合 ${n(d.conditionsFit, 3)}`,
-    `中高齡友善 ${n(d.ageFriendly, 3)}`,
-    `搜尋相關 ${n(d.relevance, 4)}`,
-    `可遠端 ${pct(d.flags.remote)} · 時間彈性 ${pct(d.flags.flexible)} · 加班輪班 ${pct(d.flags.overtime)} · 體力 ${pct(d.flags.physical)} · 偏好年輕 ${pct(d.flags.young)}`,
+    `${L("skillsFit")} ${n(d.skillsFit, 4)}`,
+    `${L("interestFit")} ${d.skillsFit != null && d.interestFit == null ? L("noInterest") : n(d.interestFit, 4)}`,
+    `${L("conditionsFit")} ${n(d.conditionsFit, 3)}`,
+    `${L("ageFriendly")} ${n(d.ageFriendly, 3)}`,
+    `${L("searchRelevance")} ${n(d.relevance, 4)}`,
+    L("jobFlags", { remote: pct(f.remote), flexible: pct(f.flexible), overtime: pct(f.overtime), physical: pct(f.physical), young: pct(f.young) }),
     `via ${d.source}`,
   ].join("\n");
 }
@@ -546,6 +535,7 @@ function jobTooltip(d) {
 // Translating English passages with Chrome's built-in, on-device Translator API.
 // The first use downloads the model, which Chrome only allows after a click; once
 // it's on the device, passages translate automatically (if enabled in options).
+// Only with the Chinese interface: an English reader has no use for it.
 // ---------------------------------------------------------------------------
 
 const TRANSLATE = { sourceLanguage: "en", targetLanguage: "zh-Hant" };
@@ -554,9 +544,12 @@ let translator = null; // Promise<Translator>
 let autoWanted = true; // options page setting
 let autoTranslate = false; // wanted, and the model is on the device
 
+const translating = () => "Translator" in self && uiLang === "zh";
+
 if ("Translator" in self) {
-  chrome.storage.sync.get({ autoTranslate: true }).then(async ({ autoTranslate: wanted }) => {
+  Promise.all([i18nReady, chrome.storage.sync.get({ autoTranslate: true })]).then(async ([, { autoTranslate: wanted }]) => {
     autoWanted = wanted;
+    if (!translating()) return;
     if (wanted && (await Translator.availability(TRANSLATE)) === "available") {
       autoTranslate = true;
       translateAll();
@@ -592,7 +585,7 @@ function passageBlock(text) {
   const body = document.createElement("span");
   body.textContent = text;
   block.append(body);
-  if (!("Translator" in self) || !isEnglish(text)) return block;
+  if (!translating() || !isEnglish(text)) return block;
 
   block.dataset.english = "";
   const button = document.createElement("button");
@@ -602,15 +595,15 @@ function passageBlock(text) {
   let showing = "original";
   const showOriginal = () => {
     body.textContent = text;
-    button.textContent = "翻成中文";
+    button.textContent = L("translate");
     showing = "original";
   };
   const showTranslation = async () => {
     if (!translations.has(text)) {
       button.disabled = true;
-      button.textContent = "翻譯中…";
+      button.textContent = L("translating");
       try {
-        const t = await getTranslator((loaded) => (button.textContent = `下載翻譯模型 ${Math.round(loaded * 100)}%`));
+        const t = await getTranslator((loaded) => (button.textContent = L("downloadingModel", Math.round(loaded * 100))));
         translations.set(text, await t.translate(text));
         if (autoWanted && !autoTranslate) {
           // The first click just downloaded the model: translate the rest of this page too,
@@ -620,14 +613,14 @@ function passageBlock(text) {
         }
       } catch (err) {
         button.disabled = false;
-        button.textContent = "翻成中文";
-        button.title = `無法翻譯：${err.message}`;
+        button.textContent = L("translate");
+        button.title = L("cantTranslate", err.message);
         return;
       }
       button.disabled = false;
     }
     body.textContent = translations.get(text);
-    button.textContent = "顯示原文";
+    button.textContent = L("showOriginal");
     showing = "translated";
   };
 
@@ -750,9 +743,9 @@ function showToast(moved) {
     document.body.append(toast);
   }
   const text = document.createElement("span");
-  text.textContent = reorderOn ? `LinkScout：已依分數排序（移動 ${moved} 筆）` : "LinkScout：原始順序";
+  text.textContent = reorderOn ? L("sorted", moved) : L("originalOrder");
   const button = document.createElement("button");
-  button.textContent = reorderOn ? "還原原始順序" : "依分數排序";
+  button.textContent = reorderOn ? L("restoreOrder") : L("sortByScore");
   button.onclick = () => {
     reorderOn = !reorderOn;
     applyOrder();
@@ -798,7 +791,7 @@ function drawPanel() {
 
   const head = document.createElement("button");
   head.className = "ls-panel-head";
-  head.textContent = `${panelCollapsed ? "▸" : "▾"} LinkScout 排行（${ranked.length}${loading ? `，評分中 ${loading}` : ""}）`;
+  head.textContent = `${panelCollapsed ? "▸" : "▾"} ${L("panelHead", ranked.length, loading)}`;
   head.onclick = () => {
     panelCollapsed = !panelCollapsed;
     if (alive()) chrome.storage.local.set({ panelCollapsed });
@@ -810,12 +803,12 @@ function drawPanel() {
   const list = document.createElement("div");
   list.className = "ls-panel-list";
   for (const e of [...ranked, ...screened]) list.append(panelRow(e));
-  if (!ranked.length && !screened.length) list.append(panelNote(loading ? "評分中…" : "還沒有評分結果"));
+  if (!ranked.length && !screened.length) list.append(panelNote(loading ? L("panelScoring") : L("panelEmpty")));
 
   const notes = [
-    screened.length && `初篩略過 ${screened.length} 筆（列在最後）`,
-    failed && `無法讀取 ${failed} 筆`,
-    engine.mode === "job" ? "只包含捲動時出現過的職缺；往下捲會繼續加入。" : "只包含這一頁的結果。",
+    screened.length && L("panelScreened", screened.length),
+    failed && L("panelFailed", failed),
+    engine.mode === "job" ? L("panelJobsNote") : L("panelPageNote"),
   ].filter(Boolean);
   panel.replaceChildren(head, list, panelNote(notes.join(" · ")));
 }
@@ -841,8 +834,7 @@ function panelRow({ url, r, m }) {
     text.append(sub);
   }
   row.append(badge(String(r.score), tier), text);
-  const toneClass = { warn: "ls-warn", good: "ls-good", muted: "ls-muted" };
-  if (r.flag) row.append(badge(r.flag.label, toneClass[r.flag.tone] ?? "ls-good"));
+  if (r.flag) row.append(flagBadge(r.flag));
   if (r.kind === "monitor") row.append(sectionBadge(r));
   else if (r.newsType) row.append(newsTypeBadge(r.newsType));
   if (r.keyPassage) row.title = r.keyPassage;

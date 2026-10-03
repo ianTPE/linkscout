@@ -46,17 +46,17 @@ describe("judgeJob", () => {
 
   it("puts any warning above the pluses", async () => {
     const { v } = await judge({ overtime: 0.9, remote: 0.95 });
-    expect(v.flag).toEqual({ label: "⚠ 常加班／輪班", tone: "warn" });
+    expect(v.flag).toEqual({ key: "overtime", label: "⚠ 常加班／輪班", tone: "warn" });
   });
 
   it("shows 想做的工作 first among pluses", async () => {
     const { v } = await judge({ interest: 3, remote: 0.99 });
-    expect(v.flag).toEqual({ label: "想做的工作", tone: "good" });
+    expect(v.flag).toEqual({ key: "interest", label: "想做的工作", tone: "good" });
   });
 
   it("otherwise shows the strongest plus", async () => {
     const { v } = await judge({ interest: 1, skills: 2, cond: 1, age: 1, remote: 0.95, flexible: 0.7 });
-    expect(v.flag?.label).toBe("可遠端");
+    expect(v.flag?.key).toBe("remote");
   });
 });
 

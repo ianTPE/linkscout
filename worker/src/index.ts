@@ -103,7 +103,7 @@ export default {
     const todo = urls.slice(0, MAX_URLS);
     // Cache per (mode/profile, query, url) so re-opening the same results page is free.
     const keyFor = (url: string) =>
-      new Request(`https://linkscout.cache/v15?m=${variant}&q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`);
+      new Request(`https://linkscout.cache/v16?m=${variant}&q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`);
     const save = <T>(url: string, verdict: T): T => {
       ctx.waitUntil(
         cache.put(keyFor(url), new Response(JSON.stringify(verdict), {

@@ -42,7 +42,7 @@ Search page (extension)  ──urls+query──▶  Worker /score
      -d '{"query":"rust async trait","urls":["https://blog.rust-lang.org/2023/12/21/async-fn-rpit-in-traits.html"]}'
    ```
 
-3. **Extension**: open `chrome://extensions`, turn on Developer mode, choose "Load unpacked", and select `extension/`. It defaults to localhost:8787 with the token `dev-token`; you can change these in the options page.
+3. **Extension**: open `chrome://extensions`, turn on Developer mode, choose "Load unpacked", and select `extension/`. It defaults to localhost:8787 with the token `dev-token`; you can change these in the options page. The interface is in English or Traditional Chinese, following the browser's language unless the options page sets one; with the Chinese interface, English key passages can be translated into Chinese on the device.
 
 4. **Deploy**
    ```sh

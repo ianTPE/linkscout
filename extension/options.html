@@ -4,7 +4,8 @@
 <style>
   body { font: 14px system-ui; padding: 16px; max-width: 520px; }
   label { display: block; margin: 12px 0 4px; }
-  input, textarea { width: 100%; box-sizing: border-box; font: inherit; }
+  input, textarea, select { width: 100%; box-sizing: border-box; font: inherit; }
+  input[type="checkbox"] { width: auto; }
   textarea { min-height: 9em; }
   .hint { color: #5f6368; font-size: 12px; margin: 4px 0 0; }
   .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
@@ -15,28 +16,41 @@
   <img src="icons/logo.svg" alt="" width="48" height="48" />
   <h1>LinkScout</h1>
 </header>
+<!-- Text comes from STRINGS in options.js, by data-i18n key, in the chosen UI language. -->
+<label><span data-i18n="uiLanguage"></span>
+  <select id="uiLanguage">
+    <option value="auto" data-i18n="uiAuto"></option>
+    <option value="en">English</option>
+    <option value="zh">中文（繁體）</option>
+  </select>
+</label>
+<p class="hint" data-i18n="uiLanguageHint"></p>
+
 <label>Worker URL <input id="workerUrl" placeholder="https://linkscout-worker.<you>.workers.dev" /></label>
 <label>Token <input id="token" type="password" /></label>
 
-<label><input id="fastMode" type="checkbox" style="width:auto" /> 快速模式：由瀏覽器直接讀取搜尋結果頁面</label>
-<p class="hint">結果約 1～2 秒內出現（關閉時要 10～20 秒）。Chrome 會詢問是否允許「讀取所有網站」：擴充功能需要它才能讀取任何新聞網站。讀取時不帶你的登入資料，效果等於你自己點開那則結果。讀不到的頁面會自動改由 Worker 讀取。這個開關會立即生效，不用按 Save。</p>
+<label><input id="fastMode" type="checkbox" /> <span data-i18n="fastMode"></span></label>
+<p class="hint" data-i18n="fastModeHint"></p>
 
-<label><input id="reorder" type="checkbox" style="width:auto" /> 依分數重新排序搜尋結果</label>
-<p class="hint">只改變顯示順序，不動頁面內容；頁面右下角可以隨時切換回原始順序。</p>
+<label><input id="reorder" type="checkbox" /> <span data-i18n="reorder"></span></label>
+<p class="hint" data-i18n="reorderHint"></p>
 
-<label><input id="autoTranslate" type="checkbox" style="width:auto" /> 自動把英文重點段落翻成中文</label>
-<p class="hint">使用 Chrome 內建的離線翻譯，不會把文字送出你的電腦。第一次需要在引用框按「翻成中文」下載翻譯模型。</p>
+<div id="translateOption">
+  <label><input id="autoTranslate" type="checkbox" /> <span data-i18n="autoTranslate"></span></label>
+  <p class="hint" data-i18n="autoTranslateHint"></p>
+</div>
 
-<label><input id="monitorMode" type="checkbox" style="width:auto" /> 新聞監測模式</label>
-<p class="hint">開啟後，搜尋結果改依下方的監測對象分成「露出」（報導客戶本身）、「產業」（客戶所在產業的新聞）、「股市」（股價、盤勢、法人買賣、ETF 等，不監測）和「無關」。股市和無關的結果會淡化並排到最後。關閉時是一般的搜尋評分。</p>
+<label><input id="monitorMode" type="checkbox" /> <span data-i18n="monitorMode"></span></label>
+<p class="hint" data-i18n="monitorModeHint"></p>
 
-<label for="monitorProfile">監測對象</label>
-<textarea id="monitorProfile" maxlength="2000" placeholder="例：客戶：台積電（TSMC），也常被稱為護國神山。產業：半導體晶圓代工，上下游包括 IC 設計、封裝測試、設備與材料。競爭對手：三星、英特爾。"></textarea>
-<p class="hint">寫客戶的名稱、簡稱或英文名、所屬產業，以及要一併留意的競爭對手或上下游，最多 2000 字。這段文字會送到你的 Worker 和 Jev 判斷；沒填的話，新聞監測模式不會啟用。</p>
+<label for="monitorProfile" data-i18n="monitorProfile"></label>
+<textarea id="monitorProfile" maxlength="2000" data-i18n-placeholder="monitorProfilePlaceholder"></textarea>
+<p class="hint" data-i18n="monitorProfileHint"></p>
 
-<label for="jobProfile">求職條件（104 職缺評分用）</label>
-<textarea id="jobProfile" maxlength="2000" placeholder="例：20 年行政與會計經驗，熟悉 Excel、ERP 系統。希望在台北市中正區或大安區，日班、不輪班，不要粗重工作，月薪 4 萬以上，可接受部分遠端。"></textarea>
-<p class="hint">用自己的話寫背景、專長和期望的工作條件即可，最多 2000 字。這段文字會送到你的 Worker 和 Jev 評分；留空的話，104 只依搜尋條件和中高齡友善程度評分。</p>
+<label for="jobProfile" data-i18n="jobProfile"></label>
+<textarea id="jobProfile" maxlength="2000" data-i18n-placeholder="jobProfilePlaceholder"></textarea>
+<p class="hint" data-i18n="jobProfileHint"></p>
 
-<p><button id="save">Save</button> <span id="status"></span></p>
+<p><button id="save" data-i18n="save"></button> <span id="status"></span></p>
+<script src="i18n.js"></script>
 <script src="options.js"></script>

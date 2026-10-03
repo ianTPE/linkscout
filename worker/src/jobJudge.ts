@@ -16,6 +16,9 @@ const FLAG_THRESHOLD = 0.6;
 const INTEREST_BADGE_MIN = 3;
 
 export interface JobFlag {
+  /** Stable id, for the extension to show in its own UI language. */
+  key: FlagKey;
+  /** Traditional Chinese label, kept for older extension versions. */
   label: string;
   tone: "good" | "warn" | "muted";
 }
@@ -41,6 +44,20 @@ const WARNINGS = {
   physical: "⚠ 體力負荷重",
   young: "⚠ 偏好年輕人",
 } as const;
+
+const PLUSES = {
+  interest: "想做的工作",
+  skills: "能力吻合",
+  conditions: "條件符合",
+  ageFriendly: "中高齡友善",
+  remote: "可遠端",
+  flexible: "時間彈性",
+  screened: "初篩略過",
+} as const;
+
+const FLAG_LABELS = { ...WARNINGS, ...PLUSES };
+export type FlagKey = keyof typeof FLAG_LABELS;
+const flag = (key: FlagKey, tone: JobFlag["tone"]): JobFlag => ({ key, label: FLAG_LABELS[key], tone });
 
 export async function judgeJob(
   client: TypeSafeClient,
@@ -199,27 +216,27 @@ function pickFlag(
   ageFriendly: number,
   fit: { skills: number; interest: number | null; conditions: number } | null,
 ): JobFlag | null {
-  const strongest = (cands: [string, number][]) =>
+  const strongest = (cands: [FlagKey, number][]) =>
     cands.filter(([, v]) => v >= FLAG_THRESHOLD).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
 
-  const warn = strongest(Object.entries(WARNINGS).map(([k, label]) => [label, flags[k as keyof typeof WARNINGS]]));
-  if (warn) return { label: warn, tone: "warn" };
+  const warn = strongest((Object.keys(WARNINGS) as (keyof typeof WARNINGS)[]).map((k) => [k, flags[k]]));
+  if (warn) return flag(warn, "warn");
 
   // Scores mapped to 0–1 so they compete with flag probabilities on one scale.
-  if (fit?.interest != null && fit.interest >= INTEREST_BADGE_MIN) return { label: "想做的工作", tone: "good" };
+  if (fit?.interest != null && fit.interest >= INTEREST_BADGE_MIN) return flag("interest", "good");
 
   const plus = strongest([
     ...(fit
       ? ([
-          ["能力吻合", (fit.skills - 2) / 2],
-          ["條件符合", (fit.conditions - 1.5) / 1.5],
-        ] as [string, number][])
+          ["skills", (fit.skills - 2) / 2],
+          ["conditions", (fit.conditions - 1.5) / 1.5],
+        ] as [FlagKey, number][])
       : []),
-    ["中高齡友善", (ageFriendly - 1.5) / 1.5],
-    ["可遠端", flags.remote],
-    ["時間彈性", flags.flexible],
+    ["ageFriendly", (ageFriendly - 1.5) / 1.5],
+    ["remote", flags.remote],
+    ["flexible", flags.flexible],
   ]);
-  return plus ? { label: plus, tone: "good" } : null;
+  return plus ? flag(plus, "good") : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +302,7 @@ export function screenedVerdict(url: string, plausible: number): ScreenedJob {
     screened: true,
     plausible,
     score: Math.round(plausible * 100),
-    flag: { label: "初篩略過", tone: "muted" },
+    flag: flag("screened", "muted"),
     keyPassage: null,
   };
 }
