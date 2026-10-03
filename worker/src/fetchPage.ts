@@ -13,6 +13,25 @@ export interface FetchEnv {
 /** "page": content supplied by the extension instead of fetched here. */
 export type Source = "kitesurf" | "jina" | "page";
 
+/**
+ * Per-source time limits. Kitesurf can hang on some sites (money.udn.com: no response
+ * after 60s, while Jina returned in 0.45s), and one stuck page holds up its whole batch.
+ */
+const KITESURF_TIMEOUT_MS = 12_000;
+const JINA_TIMEOUT_MS = 15_000;
+
+/** fetch() that fails with a readable message instead of hanging. */
+async function fetchWithin(ms: number, input: string, init: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(input, { ...init, signal: AbortSignal.timeout(ms) });
+  } catch (err) {
+    if (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")) {
+      throw new Error(`timed out after ${ms / 1000}s`);
+    }
+    throw err;
+  }
+}
+
 /** Below this (after cleaning), treat the result as a failed render (bot wall, empty shell, error page). */
 const MIN_CONTENT_CHARS = 200;
 
@@ -63,7 +82,7 @@ async function fetchViaJina(env: FetchEnv, url: string): Promise<RawPage> {
   };
   if (env.JINA_API_KEY) headers.Authorization = `Bearer ${env.JINA_API_KEY}`;
 
-  const res = await fetch(`https://r.jina.ai/${url}`, { headers });
+  const res = await fetchWithin(JINA_TIMEOUT_MS, `https://r.jina.ai/${url}`, { headers });
   const body = (await res.json()) as {
     data?: { content?: string; title?: string };
     readableMessage?: string;
@@ -79,7 +98,7 @@ async function fetchViaKitesurf(env: FetchEnv, url: string): Promise<RawPage> {
     `https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}` +
     `/browser-run/markdown?browser=kitesurf`;
 
-  const res = await fetch(endpoint, {
+  const res = await fetchWithin(KITESURF_TIMEOUT_MS, endpoint, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${env.CF_API_TOKEN}`,

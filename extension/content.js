@@ -3,17 +3,27 @@
 //
 // Per-site settings:
 //   query()        the search terms
-//   links          selector for result title links
+//   links          selector for result title links (or a function returning one)
 //   canonical(u)   optional: strip tracking params so the same result caches once
 //   content(url)   optional: fetch the result's text from inside this page, for sites
 //                  that block Browser Run / Jina; returns { title, markdown } or null
 //   mode           optional: "job" scores results as job postings
-//   reorder        optional: false where results must keep the site's order
+//   reorder        optional: false (or a function returning false) where results must keep the site's order
 
 const param = (name) => () => new URLSearchParams(location.search).get(name);
 
+// Google's News tab (tbm=nws) titles are [role=heading] cards, not <h3>, laid out in a
+// two-column grid grouped by story, which a flex-column reorder would collapse.
+const isGoogleNews = () => param("tbm")() === "nws";
+const GOOGLE = {
+  query: param("q"),
+  links: () => (isGoogleNews() ? '#search a:has([role="heading"])' : "#search a:has(h3)"),
+  reorder: () => !isGoogleNews(),
+};
+
 const ENGINES = {
-  "www.google.com": { query: param("q"), links: "#search a:has(h3)" },
+  "www.google.com": GOOGLE,
+  "www.google.com.tw": GOOGLE,
   "www.bing.com": { query: param("q"), links: "#b_results li.b_algo h2 a" },
   "duckduckgo.com": { query: param("q"), links: 'a[data-testid="result-title-a"]' },
   "www.104.com.tw": {
@@ -107,6 +117,8 @@ async function fetch104Job(url) {
 }
 
 const engine = ENGINES[location.hostname];
+const linkSelector = () => (typeof engine.links === "function" ? engine.links() : engine.links);
+const canReorder = () => (typeof engine.reorder === "function" ? engine.reorder() : engine.reorder !== false);
 const results = new Map(); // url -> result, or { loading: true } while in flight
 // anchor -> url its box shows. Not a plain "seen" set: 104's virtual list reuses the same
 // anchor elements for different jobs as you scroll, so an anchor must follow its current URL.
@@ -124,7 +136,10 @@ const CATEGORY_LABEL = {
 function realUrl(a) {
   try {
     const u = new URL(a.href);
-    if (u.hostname.endsWith("google.com") && u.pathname === "/url") return u.searchParams.get("q") || u.searchParams.get("url");
+    // Google's redirect links (/url?q=…) point at the results page's own domain (google.com, google.com.tw).
+    if (u.hostname === location.hostname && location.hostname.includes("google.") && u.pathname === "/url") {
+      return u.searchParams.get("q") || u.searchParams.get("url");
+    }
     return engine.canonical ? engine.canonical(u) : u.href;
   } catch {
     return null;
@@ -133,7 +148,7 @@ function realUrl(a) {
 
 function scan() {
   if (!engine) return;
-  for (const a of document.querySelectorAll(engine.links)) {
+  for (const a of document.querySelectorAll(linkSelector())) {
     const url = realUrl(a);
     if (!url || !/^https?:/.test(url) || shown.get(a) === url) continue;
     shown.set(a, url);
@@ -148,7 +163,7 @@ function scan() {
 
 /** Redraw every anchor currently showing `url`. */
 function render(url) {
-  for (const a of document.querySelectorAll(engine.links)) {
+  for (const a of document.querySelectorAll(linkSelector())) {
     if (shown.get(a) === url) mount(a, results.get(url));
   }
 }
@@ -172,9 +187,12 @@ async function flush() {
   queryWaits = 0;
   const urls = [...pending];
   pending = new Set();
+  // Small batches for pages the Worker must fetch, so one slow site doesn't hold up the
+  // rest; job sites send whole batches (their content comes along, and triage wants them together).
+  const batchSize = engine.mode === "job" ? 10 : 3;
 
-  for (let i = 0; i < urls.length; i += 10) {
-    const chunk = urls.slice(i, i + 10);
+  for (let i = 0; i < urls.length; i += batchSize) {
+    const chunk = urls.slice(i, i + batchSize);
     const pages = engine.content ? await collectPages(chunk) : undefined;
     chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages, mode: engine.mode }, (resp) => {
       for (const url of chunk) {
@@ -404,9 +422,9 @@ chrome.storage.sync.get({ reorder: true }).then((v) => {
 });
 
 function applyOrder() {
-  if (!engine || engine.reorder === false) return;
+  if (!engine || !canReorder()) return;
   restoreOrder();
-  const anchors = [...document.querySelectorAll(engine.links)].filter((a) => typeof scoreOf(a) === "number");
+  const anchors = [...document.querySelectorAll(linkSelector())].filter((a) => typeof scoreOf(a) === "number");
   if (reorderOn && anchors.length >= 2) {
     const moved = reorderWithin(anchors);
     showToast(moved);

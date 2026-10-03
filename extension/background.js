@@ -9,6 +9,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const { workerUrl, token, jobProfile } = await chrome.storage.sync.get(DEFAULTS);
     try {
       const res = await fetch(`${workerUrl.replace(/\/$/, "")}/score`, {
+        // The Worker bounds each page fetch; this only guards against a stuck connection.
+        signal: AbortSignal.timeout(60_000),
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
@@ -22,7 +24,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (!res.ok) throw new Error(`Worker ${res.status}: ${await res.text()}`);
       sendResponse(await res.json());
     } catch (err) {
-      sendResponse({ error: String(err) });
+      sendResponse({ error: err?.name === "TimeoutError" ? "逾時：Worker 60 秒內沒有回應" : String(err) });
     }
   })();
   return true; // keep the channel open for the async response

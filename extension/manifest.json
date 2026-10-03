@@ -10,6 +10,7 @@
     {
       "matches": [
         "https://www.google.com/search*",
+        "https://www.google.com.tw/search*",
         "https://www.bing.com/search*",
         "https://duckduckgo.com/*",
         "https://www.104.com.tw/jobs/search*"
