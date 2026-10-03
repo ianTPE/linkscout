@@ -73,7 +73,7 @@ export default {
       urls.slice(0, MAX_URLS).map(async (url) => {
         // Cache per (query, url) so re-opening the same SERP is free.
         const key = new Request(
-          `https://linkscout.cache/v10?m=${variant}&q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`,
+          `https://linkscout.cache/v12?m=${variant}&q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`,
         );
         const hit = await cache.match(key);
         if (hit) return (await hit.json()) as (Verdict | JobVerdict) & { source: Source };

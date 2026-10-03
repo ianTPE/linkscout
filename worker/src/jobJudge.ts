@@ -12,6 +12,8 @@ const WEIGHTS = { skills: 0.3, interest: 0.25, conditions: 0.2, ageFriendly: 0.1
 
 /** A flag shows on the badge once its probability reaches this. */
 const FLAG_THRESHOLD = 0.6;
+/** interest_fit level 3 = "Mostly the kind of work the seeker wants": enough for the badge. */
+const INTEREST_BADGE_MIN = 3;
 
 export interface JobFlag {
   label: string;
@@ -188,7 +190,10 @@ export async function judgeJob(
   };
 }
 
-/** Warnings outrank pluses; within each group the strongest signal wins. */
+/**
+ * Warnings outrank pluses. Among pluses, "the kind of work you want" always shows when it
+ * qualifies; otherwise the strongest signal wins.
+ */
 function pickFlag(
   flags: Record<keyof typeof WARNINGS | "remote" | "flexible", number>,
   ageFriendly: number,
@@ -201,10 +206,11 @@ function pickFlag(
   if (warn) return { label: warn, tone: "warn" };
 
   // Scores mapped to 0–1 so they compete with flag probabilities on one scale.
+  if (fit?.interest != null && fit.interest >= INTEREST_BADGE_MIN) return { label: "想做的工作", tone: "good" };
+
   const plus = strongest([
     ...(fit
       ? ([
-          ["想做的工作", fit.interest == null ? 0 : (fit.interest - 2) / 2],
           ["能力吻合", (fit.skills - 2) / 2],
           ["條件符合", (fit.conditions - 1.5) / 1.5],
         ] as [string, number][])
