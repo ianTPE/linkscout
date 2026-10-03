@@ -6,6 +6,8 @@
 
 <p align="center">Scores the links on a search results page before you click them.</p>
 
+![LinkScout on Google News: each result gets a score, a news-type badge and its key passage, results are reordered by score, and a side panel ranks them all](docs/screenshot.jpg)
+
 ```
 Search page (extension)  ──urls+query──▶  Worker /score
                                             ├─ Cloudflare Browser Run (Kitesurf) → Markdown
