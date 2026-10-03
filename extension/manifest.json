@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LinkScout",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Scores search results and job listings before you click, shows the key passage, and sorts news into monitoring-report sections.",
   "icons": {
     "16": "icons/icon-16.png",
