@@ -41,12 +41,17 @@ Search page (extension)  ──urls+query──▶  Worker /score
 4. **Deploy**
    ```sh
    cd worker
-   wrangler secret put CF_API_TOKEN
-   wrangler secret put TYPESAFE_API_KEY
-   wrangler secret put LINKSCOUT_TOKEN
-   npm run deploy
+   npx wrangler login
+   npx wrangler deploy
+   npx wrangler secret bulk secrets.json   # then delete secrets.json
    ```
-   Then put the workers.dev URL and token into the extension's options page.
+   `secrets.json` holds the same five keys as `worker/.dev.vars.example` (`CF_ACCOUNT_ID`, `CF_API_TOKEN`,
+   `TYPESAFE_API_KEY`, `JINA_API_KEY`, `LINKSCOUT_TOKEN`). In production, `LINKSCOUT_TOKEN` must be a random
+   value (e.g. `openssl rand -hex 32`), not `dev-token`: the workers.dev URL is public, and this token is all
+   that stops strangers from spending your Browser Run / Jev / Jina quota. Keep it in `.env` as
+   `LINKSCOUT_PROD_TOKEN` so `env:sync` doesn't copy it into local dev.
+
+   Then put the workers.dev URL and that token into the extension's options page.
 
 ## Scoring
 
