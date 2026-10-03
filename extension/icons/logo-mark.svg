@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+  <title>LinkScout</title>
+  <desc>Two linked shapes, with a mint compass point facing northeast on a transparent background.</desc>
+  <path d="M70 76 57 89a18.385 18.385 0 0 1-26-26l13-13" stroke="#F4FAFC" stroke-width="11" stroke-linecap="round"/>
+  <path d="m58 52 13-13c4-4 8-6 14-7l15-4-4 15c-1 6-3 10-7 14L76 70" stroke="#68E0BD" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m49 79 30-30" stroke="#F4FAFC" stroke-width="11" stroke-linecap="round"/>
+</svg>

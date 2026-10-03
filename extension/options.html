@@ -7,7 +7,14 @@
   input, textarea { width: 100%; box-sizing: border-box; font: inherit; }
   textarea { min-height: 9em; }
   .hint { color: #5f6368; font-size: 12px; margin: 4px 0 0; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+  .brand img { width: 48px; height: 48px; }
+  .brand h1 { margin: 0; font-size: 24px; color: #142d42; letter-spacing: -0.6px; }
 </style>
+<header class="brand">
+  <img src="icons/logo.svg" alt="" width="48" height="48" />
+  <h1>LinkScout</h1>
+</header>
 <label>Worker URL <input id="workerUrl" placeholder="https://linkscout-worker.<you>.workers.dev" /></label>
 <label>Token <input id="token" type="password" /></label>
 
