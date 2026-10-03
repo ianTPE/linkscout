@@ -10,6 +10,7 @@
     "predev": "npm run env:sync",
     "dev": "npm run dev -w worker",
     "deploy": "npm run deploy -w worker",
-    "typecheck": "npm run typecheck -w worker"
+    "typecheck": "npm run typecheck -w worker",
+    "test": "npm test -w worker"
   }
 }

@@ -55,7 +55,38 @@ Search page (extension)  ──urls+query──▶  Worker /score
 
 ## Scoring
 
-`worker/src/judge.ts` asks Jev five independent questions in one request: relevance (Score 0–4), depth (Score 0–3), SEO filler (Noul), category (Choice), and key passage (a Choice over paragraphs that code has already split out). The 0–100 total is computed in code, so changing the weights doesn't require running the model again.
+Search results (Google, Bing, DuckDuckGo, including their News tabs) are judged by `worker/src/judge.ts`, which asks Jev six independent questions in one `systemOne` request:
+
+| Question | Type |
+| --- | --- |
+| relevance to the search | `Score` 0–4 |
+| depth of the content | `Score` 0–3 |
+| SEO filler / content farm | `Noul` |
+| mainly a sales page | `Noul` |
+| kind of page (docs, tutorial, Q&A, news, …) | `Choice` |
+| key passage to show under the result | `Choice` over paragraphs that code has already split out ("select, don't generate") |
+
+The 0–100 total is computed in code, so changing the weights doesn't require running the model again:
+
+```
+(0.65 · relevance + 0.35 · depth) × (1 − 0.7 · seo) × (1 − 0.5 · sales · (1 − transactional))
+```
+
+`transactional` is one `Noul` per search ("is this search about buying something?"), so sales pages aren't penalized on shopping searches. With reordering on, results are sorted by this score.
+
+Job postings on 104.com.tw use `worker/src/jobJudge.ts` instead, which scores each job against the seeker's free-text profile from the options page: skills fit, the kind of work they want, working conditions (`Score`s), age-friendliness, relevance, and `Noul` flags for remote work, flexible hours, overtime, physical labor and a preference for young applicants. The badge shows the strongest warning, or else the strongest plus. Before that, one title-only request triages the whole batch, and jobs with a `Noul` below 0.15 skip full scoring; on 10 jobs that request costs about 1,500 tokens, against about 3,600 tokens per job for full scoring.
+
+## Tests
+
+```bash
+npm test
+```
+
+The tests in `worker/test/` run the page cleaning and the scoring policy against a fake Jev client with canned answers, so they need no API key. CI runs them with the typecheck on every push.
+
+## How this was built
+
+Most of the code was written with Claude Code (Anthropic's coding agent), directed and tested by the author on real search pages.
 
 ## License
 
