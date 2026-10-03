@@ -64,7 +64,7 @@ function splitFrontMatter(raw: string): { title: string; body: string } {
  */
 function skipToArticle(body: string, title: string): string {
   if (!title) return body;
-  const wanted = normalize(title);
+  const wanted = normalize(visibleText(title)); // same transform as the H1, so "Engineer-Angular" still matches
   const lines = body.split("\n");
   const start = lines.findIndex((line) => {
     const h1 = line.match(/^#\s+(.*)/)?.[1];

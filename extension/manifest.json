@@ -11,7 +11,8 @@
       "matches": [
         "https://www.google.com/search*",
         "https://www.bing.com/search*",
-        "https://duckduckgo.com/*"
+        "https://duckduckgo.com/*",
+        "https://www.104.com.tw/jobs/search*"
       ],
       "js": ["content.js"],
       "css": ["content.css"],

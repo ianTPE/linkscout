@@ -10,7 +10,8 @@ export interface FetchEnv {
   JINA_API_KEY?: string;
 }
 
-export type Source = "kitesurf" | "jina";
+/** "page": content supplied by the extension instead of fetched here. */
+export type Source = "kitesurf" | "jina" | "page";
 
 /** Below this (after cleaning), treat the result as a failed render (bot wall, empty shell, error page). */
 const MIN_CONTENT_CHARS = 200;

@@ -11,7 +11,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const res = await fetch(`${workerUrl.replace(/\/$/, "")}/score`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ query: msg.query, urls: msg.urls }),
+        body: JSON.stringify({ query: msg.query, urls: msg.urls, pages: msg.pages }),
       });
       if (!res.ok) throw new Error(`Worker ${res.status}: ${await res.text()}`);
       sendResponse(await res.json());

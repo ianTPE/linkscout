@@ -1,11 +1,63 @@
 // Finds result links on the SERP (including ones rendered later), sends new ones
 // to the background in small batches, and pins a badge + key passage next to each.
+//
+// Per-site settings:
+//   query()        the search terms
+//   links          selector for result title links
+//   canonical(u)   optional: strip tracking params so the same result caches once
+//   content(url)   optional: fetch the result's text from inside this page, for sites
+//                  that block Browser Run / Jina; returns { title, markdown } or null
+
+const param = (name) => () => new URLSearchParams(location.search).get(name);
 
 const ENGINES = {
-  "www.google.com": { query: () => new URLSearchParams(location.search).get("q"), links: "#search a:has(h3)" },
-  "www.bing.com": { query: () => new URLSearchParams(location.search).get("q"), links: "#b_results li.b_algo h2 a" },
-  "duckduckgo.com": { query: () => new URLSearchParams(location.search).get("q"), links: 'a[data-testid="result-title-a"]' },
+  "www.google.com": { query: param("q"), links: "#search a:has(h3)" },
+  "www.bing.com": { query: param("q"), links: "#b_results li.b_algo h2 a" },
+  "duckduckgo.com": { query: param("q"), links: 'a[data-testid="result-title-a"]' },
+  "www.104.com.tw": {
+    query: param("keyword"),
+    links: 'h2 a[href*="/job/"]',
+    canonical: (u) => u.origin + u.pathname, // drop ?jobsource=…
+    content: fetch104Job,
+  },
 };
+
+/**
+ * 104 job pages sit behind a Cloudflare challenge that Browser Run and Jina often fail.
+ * Its own JSON API is same-origin here and already passes in the user's browser.
+ */
+async function fetch104Job(url) {
+  const id = new URL(url).pathname.split("/").pop();
+  const res = await fetch(`/job/ajax/content/${id}`, { headers: { Accept: "application/json" } });
+  if (!res.ok) return null;
+  const d = (await res.json())?.data;
+  if (!d?.jobDetail) return null;
+
+  const job = d.jobDetail;
+  const cond = d.condition ?? {};
+  const names = (xs) => (xs ?? []).map((x) => x.description).filter(Boolean).join("、");
+  const lines = [
+    `# ${d.header?.jobName ?? ""}`,
+    "",
+    `公司：${d.header?.custName ?? ""}`,
+    `薪資：${job.salary ?? ""}`,
+    `地點：${job.addressRegion ?? ""}${job.addressDetail ?? ""}`,
+    `職務類別：${names(job.jobCategory)}`,
+    job.remoteWork?.description ? `遠端：${job.remoteWork.description}` : null,
+    "", "## 工作內容", "", job.jobDescription ?? "",
+    "", "## 條件要求", "",
+    `工作經歷：${cond.workExp ?? ""}`,
+    `學歷：${cond.edu ?? ""}`,
+    `擅長工具：${names(cond.specialty)}`,
+    `工作技能：${names(cond.skill)}`,
+    "", cond.other ?? "",
+    "", "## 福利", "", d.welfare?.welfare ?? "",
+  ];
+  return {
+    title: `${d.header?.jobName ?? ""}｜${d.header?.custName ?? ""}`,
+    markdown: lines.filter((l) => l !== null).join("\n"),
+  };
+}
 
 const engine = ENGINES[location.hostname];
 const seen = new Set();
@@ -21,7 +73,7 @@ function realUrl(a) {
   try {
     const u = new URL(a.href);
     if (u.hostname.endsWith("google.com") && u.pathname === "/url") return u.searchParams.get("q") || u.searchParams.get("url");
-    return u.href;
+    return engine.canonical ? engine.canonical(u) : u.href;
   } catch {
     return null;
   }
@@ -39,7 +91,7 @@ function scan() {
   if (pending.size && !timer) timer = setTimeout(flush, 300);
 }
 
-function flush() {
+async function flush() {
   timer = null;
   const batch = pending;
   pending = new Map();
@@ -49,7 +101,8 @@ function flush() {
   const urls = [...batch.keys()];
   for (let i = 0; i < urls.length; i += 10) {
     const chunk = urls.slice(i, i + 10);
-    chrome.runtime.sendMessage({ type: "score", query, urls: chunk }, (resp) => {
+    const pages = engine.content ? await collectPages(chunk) : undefined;
+    chrome.runtime.sendMessage({ type: "score", query, urls: chunk, pages }, (resp) => {
       for (const url of chunk) {
         const r = resp?.results?.find((x) => x.url === url);
         mount(batch.get(url), r ?? { error: resp?.error ?? "no response" });
@@ -72,6 +125,20 @@ function mountPoint(anchor) {
     if (cs.transform !== "none" || cs.flexDirection.endsWith("reverse")) point = el;
   }
   return point;
+}
+
+/** Pages this site lets us read directly; a failed one is left for the Worker to fetch. */
+async function collectPages(urls) {
+  const pages = {};
+  await Promise.all(
+    urls.map(async (url) => {
+      try {
+        const page = await engine.content(url);
+        if (page) pages[url] = page;
+      } catch {}
+    }),
+  );
+  return pages;
 }
 
 function mount(anchor, data) {

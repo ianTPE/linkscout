@@ -1,7 +1,10 @@
-// POST /score  { query: string, urls: string[] }  →  { results: (Verdict | { url, error })[] }
+// POST /score  { query, urls[], pages? }  →  { results: (Verdict | { url, error })[] }
+//
+// `pages` lets the extension supply content it already has (e.g. from a site's own API,
+// fetched in the user's browser) for sites that block Browser Run and Jina.
 
 import { TypeSafeClient } from "@typesafe-ai/sdk";
-import { toPassages } from "./cleanMarkdown";
+import { cleanMarkdown, toPassages } from "./cleanMarkdown";
 import { fetchPage, type Source } from "./fetchPage";
 import { judgePage, type Verdict } from "./judge";
 
@@ -14,6 +17,10 @@ export interface Env {
 }
 
 const MAX_URLS = 10;
+/** Cap on client-supplied page content, before cleaning. */
+const MAX_PAGE_CHARS = 50_000;
+
+type SuppliedPages = Record<string, { title?: string; markdown?: string }>;
 const CACHE_TTL_S = 60 * 60 * 24;
 
 const cors = {
@@ -35,7 +42,11 @@ export default {
       return json({ error: "unauthorized" }, 401);
     }
 
-    const { query, urls } = (await request.json()) as { query?: string; urls?: string[] };
+    const { query, urls, pages = {} } = (await request.json()) as {
+      query?: string;
+      urls?: string[];
+      pages?: SuppliedPages;
+    };
     if (!query || !Array.isArray(urls) || urls.length === 0) {
       return json({ error: "body must be { query, urls[] }" }, 400);
     }
@@ -47,13 +58,17 @@ export default {
       urls.slice(0, MAX_URLS).map(async (url) => {
         // Cache per (query, url) so re-opening the same SERP is free.
         const key = new Request(
-          `https://linkscout.cache/v4?q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`,
+          `https://linkscout.cache/v5?q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`,
         );
         const hit = await cache.match(key);
         if (hit) return (await hit.json()) as Verdict & { source: Source };
 
         try {
-          const page = await fetchPage(env, url);
+          const supplied = pages[url];
+          const page =
+            typeof supplied?.markdown === "string" && supplied.markdown.trim()
+              ? { ...cleanMarkdown(supplied.markdown.slice(0, MAX_PAGE_CHARS), supplied.title), source: "page" as const }
+              : await fetchPage(env, url);
           const verdict = {
             ...(await judgePage(client, query, url, page.title, page.markdown, toPassages(page.blocks))),
             source: page.source,
