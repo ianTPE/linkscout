@@ -4,12 +4,22 @@
 
 importScripts("i18n.js");
 
-const DEFAULTS = { workerUrl: "http://localhost:8787", token: "dev-token", jobProfile: "", monitorProfile: "" };
+const DEFAULTS = {
+  workerUrl: "http://localhost:8787",
+  token: "dev-token",
+  jobProfile: "",
+  monitorProfile: "",
+  monitorInclude: "",
+  monitorExclude: "",
+};
+/** One headline per line in the options page. */
+const lines = (text) => text.split("\n").map((l) => l.trim()).filter(Boolean);
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "score") return;
   (async () => {
-    const { workerUrl, token, jobProfile, monitorProfile } = await chrome.storage.sync.get(DEFAULTS);
+    const { workerUrl, token, jobProfile, monitorProfile, monitorInclude, monitorExclude } =
+      await chrome.storage.sync.get(DEFAULTS);
     try {
       const res = await fetch(`${workerUrl.replace(/\/$/, "")}/score`, {
         // The Worker bounds each page fetch; this only guards against a stuck connection.
@@ -24,7 +34,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           // Each profile only goes along in its own mode: the job profile for job sites,
           // the monitoring client for search pages in monitoring mode.
           ...(msg.mode === "job" ? { mode: "job", profile: jobProfile } : {}),
-          ...(msg.mode === "monitor" ? { mode: "monitor", profile: monitorProfile } : {}),
+          ...(msg.mode === "monitor"
+            ? {
+                mode: "monitor",
+                profile: monitorProfile,
+                examples: { include: lines(monitorInclude), exclude: lines(monitorExclude) },
+              }
+            : {}),
         }),
       });
       if (!res.ok) throw new Error(`Worker ${res.status}: ${await res.text()}`);

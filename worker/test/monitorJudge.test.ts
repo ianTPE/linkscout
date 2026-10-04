@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { judgeMonitor, monitorScore } from "../src/monitorJudge";
+import { judgeMonitor, monitorScore, normalizeExamples } from "../src/monitorJudge";
 import { fakeClient } from "./fakeClient";
 
 const answers = (o: { section?: string; confidence?: number; importance?: number; prominence?: number } = {}) => ({
@@ -39,6 +39,14 @@ describe("judgeMonitor", () => {
       ["importance", "key_passage", "news_type", "prominence", "section", "tone", "topic"],
     );
     expect((requests[0].state as { monitoring_client: string }).monitoring_client).toBe("客戶：台積電");
+    expect(requests[0].state).not.toHaveProperty("monitoring_examples");
+  });
+
+  it("puts the report's example headlines in state when given", async () => {
+    const { client, requests } = fakeClient(answers());
+    const examples = { include: ["台積電跌停"], exclude: ["台股盤後：加權指數漲 100 點"] };
+    await judgeMonitor(client, "台積電", "客戶：台積電", "https://example.com", "T", "c", [], examples);
+    expect(requests[0].state).toMatchObject({ monitoring_examples: examples });
   });
 
   it("returns the section, tone and topic with the computed score", async () => {
@@ -58,5 +66,20 @@ describe("judgeMonitor", () => {
     const { client } = fakeClient(answers({ section: "stock", confidence: 0.39, importance: 1.5 }));
     const v = await judgeMonitor(client, "q", "p", "https://example.com", "T", "c", []);
     expect(v).toMatchObject({ uncertain: true, score: 50 });
+  });
+});
+
+describe("normalizeExamples", () => {
+  it("keeps up to five trimmed, non-empty strings per list", () => {
+    const many = ["a", " b ", "", "c", "d", "e", "f"];
+    expect(normalizeExamples({ include: many, exclude: [1, "x"] })).toEqual({
+      include: ["a", "b", "c", "d", "e"],
+      exclude: ["x"],
+    });
+  });
+
+  it("returns null when there is nothing usable", () => {
+    expect(normalizeExamples(undefined)).toBeNull();
+    expect(normalizeExamples({ include: [" "], exclude: "x" })).toBeNull();
   });
 });

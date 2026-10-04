@@ -10,11 +10,11 @@ import { keyPassageQuestion, newsTypeQuestion, type NewsType } from "./judge";
 
 export const SECTIONS = {
   exposure:
-    "News exposure: the article is about the client company itself (not a namesake) or substantively covers its business, products, people, or events",
+    "News exposure: the article is about the client company itself (not a namesake) or substantively covers its business, products, people, or events, including an article mainly about the client's own stock (its price, trading, buybacks, or exchange actions on it)",
   industry:
     "Industry news: not substantively about the client, but about its industry, market, supply chain, customers, competitors, regulation, or technology in a way that matters to the client",
   stock:
-    "Stock-market news: mainly share prices, market moves, trading volume, institutional buying or selling, margin trading, ETF holdings, or analyst price targets",
+    "Stock-market news: market moves or other companies' shares, or a roundup of many stocks' prices, trading, institutional buying or selling, margin trading, ETF holdings, or price targets in which the client is one name among many",
   unrelated: "Unrelated: none of the above",
 } as const;
 export type Section = keyof typeof SECTIONS;
@@ -63,6 +63,29 @@ export interface MonitorVerdict {
   keyPassage: string | null;
 }
 
+/** Headlines the user's report did and did not include, as few-shot guidance for the section. */
+// A type alias, not an interface, so it fits the SDK's JSON state type.
+export type MonitorExamples = {
+  include: string[];
+  exclude: string[];
+};
+
+const MAX_EXAMPLES = 5;
+const MAX_EXAMPLE_CHARS = 200;
+
+/** Keeps up to five non-empty headlines per list from untrusted input; null when both are empty. */
+export function normalizeExamples(raw: unknown): MonitorExamples | null {
+  const list = (v: unknown) =>
+    (Array.isArray(v) ? v : [])
+      .filter((x): x is string => typeof x === "string")
+      .map((x) => x.trim().slice(0, MAX_EXAMPLE_CHARS))
+      .filter(Boolean)
+      .slice(0, MAX_EXAMPLES);
+  const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const examples = { include: list(r.include), exclude: list(r.exclude) };
+  return examples.include.length || examples.exclude.length ? examples : null;
+}
+
 /** Below this confidence, an article judged out of the report still shows, marked for checking. */
 export const UNCERTAIN_BELOW = 0.5;
 
@@ -88,10 +111,12 @@ export async function judgeMonitor(
   title: string,
   markdown: string,
   passages: string[],
+  examples: MonitorExamples | null = null,
 ): Promise<MonitorVerdict> {
   const state = {
     search_query: query,
     monitoring_client: profile.trim(),
+    ...(examples ? { monitoring_examples: examples } : {}),
     page: { url, title, content: markdown.slice(0, 12_000) },
   };
   const passage = keyPassageQuestion(passages);
@@ -104,7 +129,8 @@ export async function judgeMonitor(
         {
           question:
             "For a media-monitoring report on the company described in `monitoring_client`, which section does the article in `page.content` belong to?",
-          note: "An article about the client's revenue, earnings, or guidance is news exposure; an article mainly about its share price or trading is stock-market news.",
+          note:
+            "The client's own stock counts as the client: an article mainly about its share price, trading, buybacks, dividends, investor conferences, or a limit-down or trading halt is news exposure. Market roundups that only list the client among many stocks are stock-market news. If `monitoring_examples` is given, it lists headlines this report did and did not include: it shows the report's own standard, so where it differs from the guidance above, follow the examples.",
         },
         SECTIONS,
       ),
@@ -124,7 +150,8 @@ export async function judgeMonitor(
         {
           question:
             "How important is the article in `page.content` for the management and PR team of the company in `monitoring_client` to know about?",
-          note: "Judge importance to the company's business and reputation, not to its share price.",
+          note:
+            "Judge importance to the company's business and reputation. Routine share-price moves are routine; an unusual event in its own stock, such as a limit-down, a trading halt, or a large buyback, can be notable or major.",
         },
         [
           "Routine: nothing they need to know",

@@ -1,17 +1,18 @@
-// POST /score  { query, urls[], pages?, mode?, profile?, news? }  →  { results: (Verdict | JobVerdict | MonitorVerdict | ScreenedJob | { url, error })[] }
+// POST /score  { query, urls[], pages?, mode?, profile?, news?, examples? }  →  { results: (Verdict | JobVerdict | MonitorVerdict | ScreenedJob | { url, error })[] }
 //
 // `pages` lets the extension supply content it already has: from a site's own API, for
 // sites that block Browser Run and Jina, or an article it fetched itself in fast mode
 // (marked `via: "browser"`), which is far faster than either.
 // `mode: "job"` scores job postings against the seeker's free-text `profile` instead;
 // `mode: "monitor"` sorts news into report sections for the monitoring client in `profile`.
+// `examples` (monitor mode) lists headlines the report did and did not include, as few-shot guidance.
 
 import { TypeSafeClient } from "@typesafe-ai/sdk";
 import { cleanMarkdown, toPassages } from "./cleanMarkdown";
 import { fetchPage, type Source } from "./fetchPage";
 import { judgeJob, screenedVerdict, triageJobs } from "./jobJudge";
 import { judgePage, searchIntent } from "./judge";
-import { judgeMonitor } from "./monitorJudge";
+import { judgeMonitor, normalizeExamples } from "./monitorJudge";
 
 export interface Env {
   CF_ACCOUNT_ID: string;
@@ -54,7 +55,7 @@ export default {
       return json({ error: "unauthorized" }, 401);
     }
 
-    const { query, urls, pages = {}, mode, profile: rawProfile, news: rawNews } = (await request.json()) as {
+    const { query, urls, pages = {}, mode, profile: rawProfile, news: rawNews, examples: rawExamples } = (await request.json()) as {
       query?: string;
       urls?: string[];
       pages?: SuppliedPages;
@@ -62,6 +63,8 @@ export default {
       profile?: string;
       /** The results come from a news search (Google/Bing/DuckDuckGo News tab). */
       news?: boolean;
+      /** Monitoring mode: headlines the report did and did not include. */
+      examples?: unknown;
     };
     const news = rawNews === true;
     const jobMode = mode === "job";
@@ -72,9 +75,13 @@ export default {
     }
     // Monitoring is judged against the client, so it can't run without one.
     const monitorMode = mode === "monitor" && profile.length > 0;
-    // Different profiles score the same page differently, so the profile is part of the cache key.
-    // News searches ask a different question in page mode, so they cache separately.
-    const variant = jobMode || monitorMode ? `${mode}:${(await sha256(profile)).slice(0, 16)}` : news ? "page-news" : "page";
+    const examples = monitorMode ? normalizeExamples(rawExamples) : null;
+    // Different profiles (and examples) score the same page differently, so they are part of the
+    // cache key. News searches ask a different question in page mode, so they cache separately.
+    const variant =
+      jobMode || monitorMode
+        ? `${mode}:${(await sha256(examples ? `${profile}\n${JSON.stringify(examples)}` : profile)).slice(0, 16)}`
+        : news ? "page-news" : "page";
 
     const client = new TypeSafeClient({ apiKey: env.TYPESAFE_API_KEY });
     const cache = caches.default;
@@ -103,7 +110,7 @@ export default {
     const todo = urls.slice(0, MAX_URLS);
     // Cache per (mode/profile, query, url) so re-opening the same results page is free.
     const keyFor = (url: string) =>
-      new Request(`https://linkscout.cache/v16?m=${variant}&q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`);
+      new Request(`https://linkscout.cache/v17?m=${variant}&q=${encodeURIComponent(query)}&u=${encodeURIComponent(url)}`);
     const save = <T>(url: string, verdict: T): T => {
       ctx.waitUntil(
         cache.put(keyFor(url), new Response(JSON.stringify(verdict), {
@@ -156,7 +163,7 @@ export default {
           const judged = jobMode
             ? await judgeJob(client, query, profile, url, page.title, page.markdown, passages)
             : monitorMode
-              ? await judgeMonitor(client, query, profile, url, page.title, page.markdown, passages)
+              ? await judgeMonitor(client, query, profile, url, page.title, page.markdown, passages, examples)
               : await judgePage(client, query, url, page.title, page.markdown, passages, transactional, news);
           return save(url, { ...judged, source: page.source });
         } catch (err) {

@@ -7,9 +7,18 @@
 .ls-spam { background: #d93025; color: #fff; }
 .ls-loading, .ls-error { background: #e8eaed; color: #5f6368; }
 .ls-passage { flex-basis: 100%; margin: 2px 0 0; white-space: pre-line; padding: 4px 8px; border-left: 3px solid #1a73e8; color: #3c4043; background: #f8f9fa; }
+.ls-marks { flex-basis: 100%; display: flex; gap: 6px; margin-top: 2px; }
+.ls-mark { all: unset; padding: 1px 8px; border: 1px solid #dadce0; border-radius: 10px; color: #5f6368; cursor: pointer; font-size: 11px; }
+.ls-mark:hover { background: #f1f3f4; color: #202124; }
+.ls-mark-include.ls-mark-on { background: #e6f4ea; border-color: #137333; color: #137333; }
+.ls-mark-exclude.ls-mark-on { background: #fce8e6; border-color: #c5221f; color: #c5221f; }
 @media (prefers-color-scheme: dark) {
   .ls-cat, .ls-loading, .ls-error { background: #3c4043; color: #e8eaed; }
   .ls-passage { color: #e8eaed; background: #303134; border-left-color: #8ab4f8; }
+  .ls-mark { border-color: #5f6368; color: #9aa0a6; }
+  .ls-mark:hover { background: #3c4043; color: #e8eaed; }
+  .ls-mark-include.ls-mark-on { background: #0d652d; border-color: #81c995; color: #e6f4ea; }
+  .ls-mark-exclude.ls-mark-on { background: #8c1d18; border-color: #f28b82; color: #fce8e6; }
 }
 .ls-good { background: #e6f4ea; color: #137333; }
 .ls-warn { background: #fce8e6; color: #c5221f; }
@@ -32,7 +41,9 @@
 @media (prefers-color-scheme: dark) {
   .ls-translate { background: #202124; border-color: #5f6368; color: #8ab4f8; }
 }
-.ls-panel { position: fixed; right: 16px; top: 160px; z-index: 2147483646; width: 320px; max-height: calc(100vh - 220px); display: flex; flex-direction: column; border-radius: 8px; font: 13px/1.4 system-ui, sans-serif; background: #fff; color: #202124; box-shadow: 0 2px 10px rgba(0,0,0,.25); overflow: hidden; }
+.ls-panel { position: fixed; right: 16px; top: 160px; z-index: 2147483646; width: 400px; max-height: calc(100vh - 220px); display: flex; flex-direction: column; border-radius: 8px; font: 13px/1.4 system-ui, sans-serif; background: #fff; color: #202124; box-shadow: 0 2px 10px rgba(0,0,0,.25); overflow: hidden; }
+/* Narrower on small screens, so it doesn't cover the results column. */
+@media (max-width: 1300px) { .ls-panel { width: 320px; } }
 .ls-panel.ls-collapsed { width: auto; }
 .ls-panel-head { all: unset; box-sizing: border-box; width: 100%; padding: 8px 12px; font-weight: 600; cursor: pointer; border-bottom: 1px solid #e8eaed; }
 .ls-collapsed .ls-panel-head { border-bottom: 0; }
@@ -41,7 +52,7 @@
 .ls-panel-row:hover { background: #f8f9fa; }
 .ls-panel-row:visited .ls-panel-title { color: #681da8; }
 .ls-panel-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.ls-panel-title { color: #1a0dab; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ls-panel-title { color: #1a0dab; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .ls-panel-sub { color: #5f6368; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ls-panel-row .ls-badge { flex: none; white-space: nowrap; }
 .ls-panel-note { padding: 6px 12px; color: #5f6368; font-size: 11px; }

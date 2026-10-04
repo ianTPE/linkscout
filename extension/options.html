@@ -7,6 +7,7 @@
   input, textarea, select { width: 100%; box-sizing: border-box; font: inherit; }
   input[type="checkbox"] { width: auto; }
   textarea { min-height: 9em; }
+  textarea.short { min-height: 6em; }
   .hint { color: #5f6368; font-size: 12px; margin: 4px 0 0; }
   .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
   .brand img { width: 48px; height: 48px; }
@@ -46,6 +47,15 @@
 <label for="monitorProfile" data-i18n="monitorProfile"></label>
 <textarea id="monitorProfile" maxlength="2000" data-i18n-placeholder="monitorProfilePlaceholder"></textarea>
 <p class="hint" data-i18n="monitorProfileHint"></p>
+
+<label for="monitorInclude" data-i18n="monitorInclude"></label>
+<textarea id="monitorInclude" class="short" maxlength="1200" data-i18n-placeholder="monitorIncludePlaceholder"></textarea>
+<label for="monitorExclude" data-i18n="monitorExclude"></label>
+<textarea id="monitorExclude" class="short" maxlength="1200" data-i18n-placeholder="monitorExcludePlaceholder"></textarea>
+<p class="hint" data-i18n="monitorExamplesHint"></p>
+
+<p><span id="markCount"></span> <button id="exportMarks" data-i18n="exportMarks"></button> <button id="clearMarks" data-i18n="clearMarks"></button></p>
+<p class="hint" data-i18n="marksHint"></p>
 
 <label for="jobProfile" data-i18n="jobProfile"></label>
 <textarea id="jobProfile" maxlength="2000" data-i18n-placeholder="jobProfilePlaceholder"></textarea>

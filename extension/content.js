@@ -101,8 +101,10 @@ async function fetchArticle(url) {
   const res = await chrome.runtime.sendMessage({ type: "fetchHtml", url });
   if (!res?.html) return null;
 
-  // DOMParser documents are inert: no scripts run and nothing loads.
-  const doc = new DOMParser().parseFromString(res.html, "text/html");
+  // DOMParser documents are inert: no scripts run and nothing loads. A <base> tag still gets
+  // applied, and the search page's CSP (Google: base-uri 'self') reports it as an error; the
+  // text extraction doesn't need it, so drop it first.
+  const doc = new DOMParser().parseFromString(res.html.replace(/<base\b[^>]*>/gi, ""), "text/html");
   const enough = (md) => md && md.replace(/\s+/g, "").length >= MIN_ARTICLE_CHARS;
 
   // The publisher's own article text for search engines, where present, beats Readability's
@@ -303,11 +305,15 @@ const MAX_QUERY_WAITS = 10;
 // Monitoring mode: search results are sorted into media-monitoring report sections for the
 // client described in the options page. Needs both the switch and a client description.
 let monitorOn = false;
+let monitorClient = ""; // first line of the client description, to tell marks apart
 const settingsReady = Promise.all([
   i18nReady,
   chrome.storage.sync
     .get({ monitorMode: false, monitorProfile: "" })
-    .then((v) => (monitorOn = v.monitorMode && v.monitorProfile.trim() !== ""))
+    .then((v) => {
+      monitorOn = v.monitorMode && v.monitorProfile.trim() !== "";
+      monitorClient = v.monitorProfile.trim().split("\n")[0].slice(0, 80);
+    })
     .catch(() => {}),
 ]);
 const currentMode = () => engine.mode ?? (monitorOn ? "monitor" : undefined);
@@ -458,6 +464,7 @@ function mount(anchor, data) {
   if (data.kind === "monitor" && !monitored(data)) {
     // Stock-market and unrelated articles stay out of the report: muted, no passage.
     box.append(badge(String(data.score), "ls-muted"), badge(label("section", data.section), "ls-muted"));
+    box.append(markButtons(box.dataset.url, data, anchor));
     box.title = monitorTooltip(data);
     return;
   }
@@ -477,6 +484,7 @@ function mount(anchor, data) {
     if (data.promotional > 0.6 && data.transactional < 0.5) box.append(badge(L("salesPage"), "ls-warn"));
   }
   if (data.keyPassage) box.append(passageBlock(data.keyPassage));
+  if (data.kind === "monitor") box.append(markButtons(box.dataset.url, data, anchor));
   box.title = data.kind === "job" ? jobTooltip(data) : data.kind === "monitor" ? monitorTooltip(data) : pageTooltip(data);
 }
 
@@ -839,6 +847,74 @@ function panelRow({ url, r, m }) {
   else if (r.newsType) row.append(newsTypeBadge(r.newsType));
   if (r.keyPassage) row.title = r.keyPassage;
   return row;
+}
+
+// ---------------------------------------------------------------------------
+// Report marks: in monitoring mode, under each result's key passage, a person can record
+// whether the result went into the report. They are only collected, in chrome.storage.local,
+// and exported from the options page, so the scoring can be checked against real decisions.
+// ---------------------------------------------------------------------------
+
+let marks = {}; // "query\nurl" -> mark entry
+chrome.storage.local.get({ marks: {} }).then((v) => (marks = v.marks)).catch(() => {});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.marks) return;
+  marks = changes.marks.newValue ?? {};
+  for (const wrap of document.querySelectorAll(".ls-marks")) showMark(wrap);
+});
+const markKey = (url) => `${engine.query()}\n${url}`;
+
+// The verdict fields worth comparing with the person's decision.
+const VERDICT_FIELDS = [
+  "score", "section", "sectionConfidence", "uncertain", "tone", "topic",
+  "newsType", "prominence", "importance", "source",
+];
+
+async function setMark(url, r, title, mark) {
+  if (!alive()) return;
+  const key = markKey(url);
+  // Re-read first: another tab may have marked something since this one loaded.
+  const { marks: all } = await chrome.storage.local.get({ marks: {} });
+  if (all[key]?.mark === mark) {
+    delete all[key]; // clicking the active mark again clears it
+  } else {
+    all[key] = {
+      url,
+      title,
+      query: engine.query(),
+      client: monitorClient,
+      mark,
+      time: new Date().toISOString(),
+      verdict: Object.fromEntries(VERDICT_FIELDS.filter((f) => f in r).map((f) => [f, r[f]])),
+    };
+  }
+  await chrome.storage.local.set({ marks: all }); // onChanged updates the buttons
+}
+
+function markButtons(url, r, anchor) {
+  const wrap = document.createElement("div");
+  wrap.className = "ls-marks";
+  wrap.dataset.url = url;
+  for (const mark of ["include", "exclude"]) {
+    const b = document.createElement("button");
+    b.className = `ls-mark ls-mark-${mark}`;
+    b.dataset.mark = mark;
+    b.textContent = L(mark === "include" ? "markInclude" : "markExclude");
+    // The box sits inside the result's link on some sites; a mark must not open the result.
+    b.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setMark(url, r, meta.get(url)?.title ?? anchor.textContent.trim(), mark);
+    };
+    wrap.append(b);
+  }
+  showMark(wrap);
+  return wrap;
+}
+
+function showMark(wrap) {
+  const current = marks[markKey(wrap.dataset.url)]?.mark;
+  for (const b of wrap.children) b.classList.toggle("ls-mark-on", b.dataset.mark === current);
 }
 
 function panelNote(text) {

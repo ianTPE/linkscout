@@ -6,8 +6,11 @@ const DEFAULTS = {
   autoTranslate: true,
   monitorMode: false,
   monitorProfile: "",
+  monitorInclude: "",
+  monitorExclude: "",
 };
 const $ = (id) => document.getElementById(id);
+let markTotal = 0; // report marks stored; shown by applyLanguage, so declared before it runs
 
 // Options-page text, added to the shared strings in i18n.js.
 Object.assign(STRINGS.en, {
@@ -24,12 +27,24 @@ Object.assign(STRINGS.en, {
     "Uses Chrome's built-in on-device translation; no text leaves your computer. The first time, click \"Translate to Chinese\" on a passage to download the translation model.",
   monitorMode: "News monitoring mode",
   monitorModeHint:
-    "Sorts search results for the client described below into Exposure (coverage of the client), Industry (news about the client's industry), Stock (share prices, market moves, institutional trading, ETFs: not monitored) and Unrelated. Stock and unrelated results are muted and sorted last. With this off, results get general search scoring.",
+    "Sorts search results for the client described below into Exposure (coverage of the client, including news about its own stock), Industry (news about the client's industry), Stock (market moves, other companies' shares, and roundups that only list the client: not monitored) and Unrelated. Stock and unrelated results are muted and sorted last. With this off, results get general search scoring.",
   monitorProfile: "Monitoring client",
   monitorProfilePlaceholder:
     "e.g. Client: TSMC (Taiwan Semiconductor Manufacturing Co., 台積電). Industry: semiconductor foundry; upstream and downstream include IC design, packaging and testing, equipment and materials. Competitors: Samsung, Intel.",
   monitorProfileHint:
     "The client's name, short names or names in other languages, its industry, and any competitors or suppliers to watch, up to 2000 characters. This text goes to your Worker and to Jev; without it, monitoring mode stays off.",
+  monitorInclude: "Example headlines the report includes (optional)",
+  monitorIncludePlaceholder: "One per line, up to 5, e.g.\nTSMC hits limit-down as AI demand fears spread",
+  monitorExclude: "Example headlines the report leaves out (optional)",
+  monitorExcludePlaceholder: "One per line, up to 5, e.g.\nTaiex closes up 100 points; foreign investors net buyers",
+  monitorExamplesHint:
+    "Borderline cases teach the most: headlines your team did or didn't put in the report. They go to Jev with the client description; changing them re-scores cached results.",
+  markCount: (n) => `Report marks: ${n}`,
+  exportMarks: "Export JSON",
+  clearMarks: "Clear",
+  clearMarksConfirm: (n) => `Delete all ${n} report marks? Export them first if you want to keep them.`,
+  marksHint:
+    "In monitoring mode, the buttons under each result's key passage record whether it went into the report, together with LinkScout's verdict at the time. They stay in this browser until you export them, for checking the scoring against your team's decisions.",
   jobProfile: "Job profile (for 104 job scoring)",
   jobProfilePlaceholder:
     "e.g. 20 years in administration and accounting, good with Excel and ERP systems. Looking for day shifts in Taipei's Zhongzheng or Da'an district, no rotating shifts or heavy lifting, NT$40,000+ a month, some remote work welcome.",
@@ -51,12 +66,23 @@ Object.assign(STRINGS.zh, {
   autoTranslateHint: "使用 Chrome 內建的離線翻譯，不會把文字送出你的電腦。第一次需要在引用框按「翻成中文」下載翻譯模型。",
   monitorMode: "新聞監測模式",
   monitorModeHint:
-    "開啟後，搜尋結果改依下方的監測對象分成「露出」（報導客戶本身）、「產業」（客戶所在產業的新聞）、「股市」（股價、盤勢、法人買賣、ETF 等，不監測）和「無關」。股市和無關的結果會淡化並排到最後。關閉時是一般的搜尋評分。",
+    "開啟後，搜尋結果改依下方的監測對象分成「露出」（報導客戶本身，包括客戶自家股票的新聞）、「產業」（客戶所在產業的新聞）、「股市」（大盤、其他公司股票，以及只把客戶列為眾多個股之一的盤勢整理，不監測）和「無關」。股市和無關的結果會淡化並排到最後。關閉時是一般的搜尋評分。",
   monitorProfile: "監測對象",
   monitorProfilePlaceholder:
     "例：客戶：台積電（TSMC），也常被稱為護國神山。產業：半導體晶圓代工，上下游包括 IC 設計、封裝測試、設備與材料。競爭對手：三星、英特爾。",
   monitorProfileHint:
     "寫客戶的名稱、簡稱或英文名、所屬產業，以及要一併留意的競爭對手或上下游，最多 2000 字。這段文字會送到你的 Worker 和 Jev 判斷；沒填的話，新聞監測模式不會啟用。",
+  monitorInclude: "會收的標題範例（選填）",
+  monitorIncludePlaceholder: "一行一則，最多 5 則，例：\n台積電跌停 AI 需求疑慮擴散",
+  monitorExclude: "不會收的標題範例（選填）",
+  monitorExcludePlaceholder: "一行一則，最多 5 則，例：\n台股收盤漲百點 外資買超",
+  monitorExamplesHint: "最有用的是邊界案例：團隊實際收或不收的標題。範例會和監測對象一起送給 Jev；改了之後，快取的結果會重新判斷。",
+  markCount: (n) => `報告標記：${n} 筆`,
+  exportMarks: "匯出 JSON",
+  clearMarks: "清除",
+  clearMarksConfirm: (n) => `確定刪除全部 ${n} 筆報告標記？要保留的話請先匯出。`,
+  marksHint:
+    "新聞監測模式下，每則結果引用欄下方的按鈕可以記錄這則有沒有收進報告，連同當時 LinkScout 的判斷一起存。資料只存在這個瀏覽器，匯出後可以拿來對照評分和團隊的實際決定。",
   jobProfile: "求職條件（104 職缺評分用）",
   jobProfilePlaceholder:
     "例：20 年行政與會計經驗，熟悉 Excel、ERP 系統。希望在台北市中正區或大安區，日班、不輪班，不要粗重工作，月薪 4 萬以上，可接受部分遠端。",
@@ -71,6 +97,7 @@ function applyLanguage() {
   for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = L(el.dataset.i18n);
   for (const el of document.querySelectorAll("[data-i18n-placeholder]")) el.placeholder = L(el.dataset.i18nPlaceholder);
   if ($("status").textContent) $("status").textContent = L("saved");
+  showMarkCount();
   // Passages are only translated into Chinese, for the Chinese interface.
   $("translateOption").hidden = uiLang !== "zh";
 }
@@ -93,6 +120,8 @@ chrome.storage.sync.get(DEFAULTS).then((v) => {
   $("autoTranslate").checked = v.autoTranslate;
   $("monitorMode").checked = v.monitorMode;
   $("monitorProfile").value = v.monitorProfile;
+  $("monitorInclude").value = v.monitorInclude;
+  $("monitorExclude").value = v.monitorExclude;
 });
 
 $("save").onclick = async () => {
@@ -104,6 +133,8 @@ $("save").onclick = async () => {
     autoTranslate: $("autoTranslate").checked,
     monitorMode: $("monitorMode").checked,
     monitorProfile: $("monitorProfile").value.trim(),
+    monitorInclude: $("monitorInclude").value.trim(),
+    monitorExclude: $("monitorExclude").value.trim(),
   });
   $("status").textContent = L("saved");
 };
@@ -115,4 +146,34 @@ chrome.permissions.contains(ALL_SITES).then((on) => ($("fastMode").checked = on)
 $("fastMode").onchange = async (e) => {
   const ok = e.target.checked ? await chrome.permissions.request(ALL_SITES) : await chrome.permissions.remove(ALL_SITES);
   if (!ok) e.target.checked = !e.target.checked; // the user declined, or Chrome refused
+};
+
+
+// Report marks from search results (see content.js), kept in chrome.storage.local.
+function showMarkCount() {
+  $("markCount").textContent = L("markCount", markTotal);
+  $("exportMarks").disabled = $("clearMarks").disabled = markTotal === 0;
+}
+const loadMarks = () =>
+  chrome.storage.local.get({ marks: {} }).then(({ marks }) => {
+    markTotal = Object.keys(marks).length;
+    showMarkCount();
+    return marks;
+  });
+loadMarks();
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.marks) loadMarks();
+});
+
+$("exportMarks").onclick = async () => {
+  const marks = Object.values(await loadMarks()).sort((a, b) => a.time.localeCompare(b.time));
+  const blob = new Blob([JSON.stringify(marks, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `linkscout-marks-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$("clearMarks").onclick = async () => {
+  if (confirm(L("clearMarksConfirm", markTotal))) await chrome.storage.local.remove("marks");
 };

@@ -58,6 +58,8 @@ const STRINGS = {
     panelFailed: (n) => `${n} unreadable`,
     panelJobsNote: "Only jobs that have appeared while scrolling; more are added as you scroll.",
     panelPageNote: "Only results on this page.",
+    markInclude: "✓ In the report",
+    markExclude: "✗ Leave out",
   },
 
   zh: {
@@ -110,6 +112,8 @@ const STRINGS = {
     panelFailed: (n) => `無法讀取 ${n} 筆`,
     panelJobsNote: "只包含捲動時出現過的職缺；往下捲會繼續加入。",
     panelPageNote: "只包含這一頁的結果。",
+    markInclude: "✓ 收進報告",
+    markExclude: "✗ 不收",
   },
 };
 
