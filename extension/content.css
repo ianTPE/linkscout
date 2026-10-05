@@ -4,6 +4,9 @@
 .ls-mid { background: #f9ab00; color: #202124; }
 .ls-low { background: #9aa0a6; color: #fff; }
 .ls-cat { background: #e8eaed; color: #3c4043; font-weight: 500; }
+/* A fact from the site, not a judgment: outlined instead of filled. */
+.ls-few { border: 1px solid #1e8e3e; color: #137333; font-weight: 500; }
+.ls-few-soft { border-color: #a8dab5; color: #5f9e6e; font-weight: 400; }
 .ls-spam { background: #d93025; color: #fff; }
 .ls-loading, .ls-error { background: #e8eaed; color: #5f6368; }
 .ls-passage { flex-basis: 100%; margin: 2px 0 0; white-space: pre-line; padding: 4px 8px; border-left: 3px solid #1a73e8; color: #3c4043; background: #f8f9fa; }
@@ -13,6 +16,8 @@
 .ls-mark-include.ls-mark-on { background: #e6f4ea; border-color: #137333; color: #137333; }
 .ls-mark-exclude.ls-mark-on { background: #fce8e6; border-color: #c5221f; color: #c5221f; }
 @media (prefers-color-scheme: dark) {
+  .ls-few { border-color: #81c995; color: #81c995; }
+  .ls-few-soft { border-color: #3d6b4a; color: #6f9c7b; }
   .ls-cat, .ls-loading, .ls-error { background: #3c4043; color: #e8eaed; }
   .ls-passage { color: #e8eaed; background: #303134; border-left-color: #8ab4f8; }
   .ls-mark { border-color: #5f6368; color: #9aa0a6; }
@@ -54,6 +59,7 @@
 .ls-panel-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ls-panel-title { color: #1a0dab; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .ls-panel-sub { color: #5f6368; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ls-panel-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 .ls-panel-row .ls-badge { flex: none; white-space: nowrap; }
 .ls-panel-note { padding: 6px 12px; color: #5f6368; font-size: 11px; }
 @media (prefers-color-scheme: dark) {

@@ -39,6 +39,9 @@ const STRINGS = {
     searchRelevance: "Search relevance",
     jobFlags: (f) =>
       `Remote ${f.remote} · Flexible hours ${f.flexible} · Overtime/shifts ${f.overtime} · Physical ${f.physical} · Prefers young ${f.young}`,
+    applicants: "applicants",
+    aiLeverage: "AI-friendly",
+    aiLeverageLevel: "Work AI tools can speed up (not scored)",
 
     translate: "Translate to Chinese",
     translating: "Translating…",
@@ -93,6 +96,9 @@ const STRINGS = {
     searchRelevance: "搜尋相關",
     jobFlags: (f) =>
       `可遠端 ${f.remote} · 時間彈性 ${f.flexible} · 加班輪班 ${f.overtime} · 體力 ${f.physical} · 偏好年輕 ${f.young}`,
+    applicants: "人應徵",
+    aiLeverage: "AI 好上手",
+    aiLeverageLevel: "AI 可加速的程度（不計分）",
 
     translate: "翻成中文",
     translating: "翻譯中…",

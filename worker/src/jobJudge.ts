@@ -1,6 +1,7 @@
 // Judge a job posting for one job seeker: whether they can do it (skills), whether it's
 // the kind of work they want (interest), working conditions, friendliness to middle-aged
-// applicants, and search relevance, plus yes/no flags for the badge.
+// applicants, and search relevance, plus yes/no flags for the badge, and how much of the
+// work AI tools can speed up (shown on its own badge, not scored).
 // Used for job sites (104) instead of judgePage.
 // Docs: https://docs.typesafe.ai/api.md
 
@@ -33,6 +34,8 @@ export interface JobVerdict {
   interestFit: number | null; // 0–4, null without a profile or if it names no kind of work
   conditionsFit: number | null; // 0–3, null without a profile
   ageFriendly: number; // 0–3
+  /** 0–3: how much of the day-to-day work AI tools can do or speed up. Shown, not scored. */
+  aiLeverage: number;
   flags: Record<string, number>; // probability 0–1 per flag
   /** The one flag to show on the badge: the strongest warning, else the strongest plus. */
   flag: JobFlag | null;
@@ -149,6 +152,19 @@ export async function judgeJob(
           "Welcoming: explicitly accepts middle-aged, older, or second-career (二度就業) applicants, or values long experience",
         ],
       ),
+      ai_leverage: score(
+        {
+          question:
+            "How much of the day-to-day work in the job in `page.content` could someone do much faster or better with AI tools?",
+          note: "AI tools here: chat assistants for drafting, summarizing, translating, searching, sorting information, data entry, spreadsheets, and routine monitoring or reporting. Physical, on-site, or face-to-face work gains little.",
+        },
+        [
+          "Little: mostly physical, on-site, or face-to-face work",
+          "Some: a few tasks such as emails or simple records",
+          "Much: a large share is writing, information, or data work AI can help with",
+          "Most: the core work is the kind AI tools do well, such as drafting, summarizing, research, data processing, or monitoring",
+        ],
+      ),
       flag_remote: noul("Does the job posting in `page.content` offer remote or hybrid work?"),
       flag_flexible: noul("Does the job posting in `page.content` offer flexible working hours or a flexible schedule?"),
       flag_overtime: noul(
@@ -201,6 +217,7 @@ export async function judgeJob(
     interestFit: fit?.interest ?? null,
     conditionsFit: fit?.conditions ?? null,
     ageFriendly: answers.age_friendly.score,
+    aiLeverage: answers.ai_leverage.score,
     flags,
     flag: pickFlag(flags, answers.age_friendly.score, fit),
     keyPassage: passage.pick(answers.key_passage.choice),

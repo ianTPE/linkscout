@@ -78,6 +78,8 @@ const ENGINES = {
     meta: (a) => ({
       title: a.textContent.trim(),
       sub: a.closest(".info-container")?.querySelector('a[href*="/company/"]')?.textContent.trim() ?? "",
+      // "兩週內應徵人數 0~5 人" → "0~5"; buckets are 0~5, 6~10, 11~30 and 30 人以上.
+      applicants: a.closest(".job-summary")?.querySelector(".action-apply__range")?.title.match(/\d+~\d+/)?.[0],
     }),
     mode: "job", // score as job postings against the profile from the options page
   },
@@ -477,6 +479,8 @@ function mount(anchor, data) {
     if (data.newsType) box.append(newsTypeBadge(data.newsType));
   } else if (data.kind === "job") {
     if (data.flag) box.append(flagBadge(data.flag));
+    const ai = aiBadge(data);
+    if (ai) box.append(ai);
   } else {
     box.append(data.newsType ? newsTypeBadge(data.newsType) : badge(label("category", data.category), "ls-cat"));
     if (data.seoSpam > 0.6) box.append(badge("SEO", "ls-spam"));
@@ -524,6 +528,22 @@ function pageTooltip(d) {
   ].join("\n");
 }
 
+// 104 shows how many applied in the last two weeks. Few applicants means a better chance,
+// but it says nothing about fit, so it's a badge, not points. Only in the panel: the job
+// card already shows the count next to the result.
+const FEW_APPLICANTS = ["0~5", "6~10"];
+const fewApplicantsBadge = (url) => {
+  const n = meta.get(url)?.applicants;
+  return FEW_APPLICANTS.includes(n) ? badge(`${n} ${L("applicants")}`, n === "0~5" ? "ls-few" : "ls-few ls-few-soft") : null;
+};
+
+// Jobs whose day-to-day work AI tools speed up a lot: a strength for someone who uses them.
+// Shown, not scored. Past 2 ("a large share is writing, information, or data work"): an
+// office assistant who also answers phones and greets visitors scored 2.0, news monitoring,
+// social media and bookkeeping 2.9–3.0, warehouse and front-desk jobs under 0.3.
+const AI_BADGE_MIN = 2.5;
+const aiBadge = (d) => (d.aiLeverage >= AI_BADGE_MIN ? badge(L("aiLeverage"), "ls-few") : null);
+
 function jobTooltip(d) {
   if (d.screened) return L("screenedJob", pct(d.plausible));
   const n = (v, max) => (v == null ? L("noProfile") : `${v.toFixed(1)}/${max}`);
@@ -535,8 +555,11 @@ function jobTooltip(d) {
     `${L("ageFriendly")} ${n(d.ageFriendly, 3)}`,
     `${L("searchRelevance")} ${n(d.relevance, 4)}`,
     L("jobFlags", { remote: pct(f.remote), flexible: pct(f.flexible), overtime: pct(f.overtime), physical: pct(f.physical), young: pct(f.young) }),
+    d.aiLeverage != null && `${L("aiLeverageLevel")} ${d.aiLeverage.toFixed(1)}/3`,
     `via ${d.source}`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -841,10 +864,20 @@ function panelRow({ url, r, m }) {
     sub.textContent = m.sub;
     text.append(sub);
   }
+  // Badges on their own line under the title, so a job with three of them keeps a readable title.
+  const tags = [];
+  if (r.flag) tags.push(flagBadge(r.flag));
+  if (r.kind === "job") tags.push(aiBadge(r), fewApplicantsBadge(url));
+  if (r.kind === "monitor") tags.push(sectionBadge(r));
+  else if (r.newsType) tags.push(newsTypeBadge(r.newsType));
+  const shownTags = tags.filter(Boolean);
+  if (shownTags.length) {
+    const line = document.createElement("span");
+    line.className = "ls-panel-tags";
+    line.append(...shownTags);
+    text.append(line);
+  }
   row.append(badge(String(r.score), tier), text);
-  if (r.flag) row.append(flagBadge(r.flag));
-  if (r.kind === "monitor") row.append(sectionBadge(r));
-  else if (r.newsType) row.append(newsTypeBadge(r.newsType));
   if (r.keyPassage) row.title = r.keyPassage;
   return row;
 }

@@ -4,12 +4,13 @@ import { fakeClient } from "./fakeClient";
 
 type Opts = Partial<{
   rel: number; age: number; skills: number; interest: number; states: number; cond: number;
-  remote: number; flexible: number; overtime: number; physical: number; young: number;
+  remote: number; flexible: number; overtime: number; physical: number; young: number; ai: number;
 }>;
 
 const answers = (o: Opts = {}) => ({
   relevance: { score: o.rel ?? 4 },
   age_friendly: { score: o.age ?? 3 },
+  ai_leverage: { score: o.ai ?? 0 },
   skills_fit: { score: o.skills ?? 4 },
   interest_fit: { score: o.interest ?? 4 },
   states_interest: { noul: o.states ?? 1 },
@@ -42,6 +43,13 @@ describe("judgeJob", () => {
     const { v } = await judge({ interest: 0, states: 0.2 });
     expect(v.interestFit).toBeNull();
     expect(v.score).toBe(100);
+  });
+
+  it("reports AI leverage without scoring it", async () => {
+    const low = await judge({ ai: 0 });
+    const high = await judge({ ai: 3 });
+    expect(high.v.aiLeverage).toBe(3);
+    expect(high.v.score).toBe(low.v.score);
   });
 
   it("puts any warning above the pluses", async () => {
