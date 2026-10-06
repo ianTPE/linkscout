@@ -40,6 +40,8 @@ const STRINGS = {
     jobFlags: (f) =>
       `Remote ${f.remote} · Flexible hours ${f.flexible} · Overtime/shifts ${f.overtime} · Physical ${f.physical} · Prefers young ${f.young}`,
     applicants: "applicants",
+    newJob: "New job",
+    postedBy: (md) => `posted by ${md}`,
     aiLeverage: "AI-friendly",
     aiLeverageLevel: "Work AI tools can speed up (not scored)",
 
@@ -97,6 +99,8 @@ const STRINGS = {
     jobFlags: (f) =>
       `可遠端 ${f.remote} · 時間彈性 ${f.flexible} · 加班輪班 ${f.overtime} · 體力 ${f.physical} · 偏好年輕 ${f.young}`,
     applicants: "人應徵",
+    newJob: "新職缺",
+    postedBy: (md) => `≤${md} 刊登`,
     aiLeverage: "AI 好上手",
     aiLeverageLevel: "AI 可加速的程度（不計分）",
 

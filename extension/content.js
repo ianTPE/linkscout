@@ -80,6 +80,9 @@ const ENGINES = {
       sub: a.closest(".info-container")?.querySelector('a[href*="/company/"]')?.textContent.trim() ?? "",
       // "兩週內應徵人數 0~5 人" → "0~5"; buckets are 0~5, 6~10, 11~30 and 30 人以上.
       applicants: a.closest(".job-summary")?.querySelector(".action-apply__range")?.title.match(/\d+~\d+/)?.[0],
+      jobNo: parseInt(new URL(a.href).pathname.split("/").pop(), 36),
+      // The date a job was last refreshed, "10/05"; promoted jobs show an icon here instead.
+      date: cardDate(a.closest(".job-summary")?.querySelector(".date-container")?.textContent),
     }),
     mode: "job", // score as job postings against the profile from the options page
   },
@@ -347,7 +350,11 @@ function scan() {
     const url = realUrl(a);
     if (!url || !/^https?:/.test(url) || shown.get(a) === url) continue;
     shown.set(a, url);
-    if (!meta.has(url)) meta.set(url, engine.meta ? engine.meta(a, url) : { title: a.textContent.trim(), sub: "" });
+    if (!meta.has(url)) {
+      const m = engine.meta ? engine.meta(a, url) : { title: a.textContent.trim(), sub: "" };
+      meta.set(url, m);
+      if (m.jobNo && m.date) noteJob(m.jobNo, m.date);
+    }
     if (!results.has(url)) {
       results.set(url, { loading: true });
       pending.add(url);
@@ -535,6 +542,74 @@ const FEW_APPLICANTS = ["0~5", "6~10"];
 const fewApplicantsBadge = (url) => {
   const n = meta.get(url)?.applicants;
   return FEW_APPLICANTS.includes(n) ? badge(`${n} ${L("applicants")}`, n === "0~5" ? "ls-few" : "ls-few ls-few-soft") : null;
+};
+
+// When was a job first posted? 104 only shows the date it was last refreshed, and employers
+// refresh old jobs daily. But job numbers (the base-36 id in /job/96god) only grow, so a job
+// numbered N refreshed on day D means every job numbered up to N existed by D. Each list card
+// adds such a point, and the highest number seen for each day is kept: a job was posted by
+// the first day whose number reaches it, and is new when its number is above everything
+// known from NEW_DAYS ago. The more 104 pages are seen, the tighter this gets.
+const NEW_DAYS = 7;
+const KEEP_DAYS = 180;
+// From 570 jobs seen on 2026-10-06, so it works before much browsing.
+let jobFrontier = { "2026-08-27": 15363346, "2026-09-30": 15400358, "2026-10-02": 15414586 };
+let frontierTimer = null;
+const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const shortDate = (iso) => `${+iso.slice(5, 7)}/${+iso.slice(8)}`;
+const daysAgo = (n) => isoDate(new Date(Date.now() - n * 86400000));
+
+/** "10/05" → "2026-10-05"; a date after today is from last year. */
+function cardDate(text) {
+  const md = text?.match(/(\d{1,2})\/(\d{1,2})/);
+  if (!md) return undefined;
+  const now = new Date();
+  const d = new Date(now.getFullYear(), md[1] - 1, md[2]);
+  if (d > now) d.setFullYear(d.getFullYear() - 1);
+  return isoDate(d);
+}
+
+function mergeFrontier(into, from) {
+  for (const [day, n] of Object.entries(from ?? {})) if (!(into[day] >= n)) into[day] = n;
+  return into;
+}
+
+chrome.storage.local
+  .get({ jobFrontier: {} })
+  .then((v) => mergeFrontier(jobFrontier, v.jobFrontier))
+  .catch(() => {});
+
+function noteJob(jobNo, day) {
+  if (jobFrontier[day] >= jobNo) return;
+  jobFrontier[day] = jobNo;
+  frontierTimer ??= setTimeout(saveFrontier, 2000);
+}
+
+async function saveFrontier() {
+  frontierTimer = null;
+  try {
+    const { jobFrontier: stored } = await chrome.storage.local.get({ jobFrontier: {} });
+    const all = mergeFrontier(stored, jobFrontier);
+    const oldest = daysAgo(KEEP_DAYS);
+    for (const day of Object.keys(all)) if (day < oldest) delete all[day];
+    await chrome.storage.local.set({ jobFrontier: all });
+  } catch {} // extension reloaded: the next page load saves again
+}
+
+/** The day by which job `jobNo` existed at the latest, or null if nothing known reaches it. */
+function postedBy(jobNo) {
+  if (!jobNo) return null;
+  let max = 0;
+  for (const day of Object.keys(jobFrontier).sort()) {
+    max = Math.max(max, jobFrontier[day]);
+    if (max >= jobNo) return day;
+  }
+  return null;
+}
+
+const isNewJob = (jobNo) => {
+  const day = postedBy(jobNo);
+  return !!jobNo && (!day || day > daysAgo(NEW_DAYS));
 };
 
 // Jobs whose day-to-day work AI tools speed up a lot: a strength for someone who uses them.
@@ -858,16 +933,18 @@ function panelRow({ url, r, m }) {
   title.className = "ls-panel-title";
   title.textContent = m.title;
   text.append(title);
-  if (m.sub) {
+  const posted = r.kind === "job" ? postedBy(m.jobNo) : null;
+  const subText = [posted && !isNewJob(m.jobNo) && L("postedBy", shortDate(posted)), m.sub].filter(Boolean).join(" · ");
+  if (subText) {
     const sub = document.createElement("span");
     sub.className = "ls-panel-sub";
-    sub.textContent = m.sub;
+    sub.textContent = subText;
     text.append(sub);
   }
   // Badges on their own line under the title, so a job with three of them keeps a readable title.
   const tags = [];
   if (r.flag) tags.push(flagBadge(r.flag));
-  if (r.kind === "job") tags.push(aiBadge(r), fewApplicantsBadge(url));
+  if (r.kind === "job") tags.push(isNewJob(m.jobNo) && badge(L("newJob"), "ls-few"), aiBadge(r), fewApplicantsBadge(url));
   if (r.kind === "monitor") tags.push(sectionBadge(r));
   else if (r.newsType) tags.push(newsTypeBadge(r.newsType));
   const shownTags = tags.filter(Boolean);
