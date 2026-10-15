@@ -53,6 +53,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 // ---------------------------------------------------------------------------
+// Shopee capture: rows from pages the person browsed go to the local product monitor
+// (~/product-monitor/receiver.py), which merges them into the daily price report.
+
+const CAPTURE_URL = "http://localhost:8788/shopee";
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type !== "shopeeCapture") return;
+  fetch(CAPTURE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page: msg.page, items: msg.items }),
+    signal: AbortSignal.timeout(10_000),
+  })
+    .then((res) => sendResponse(res.ok ? { ok: true } : { error: `HTTP ${res.status}` }))
+    .catch((err) => sendResponse({ error: String(err) }));
+  return true;
+});
+
+// ---------------------------------------------------------------------------
 // Fast mode: fetch a result page from the user's browser. News sites answer in well
 // under a second, against 3–30 s through Browser Run or Jina. Needs the optional
 // <all_urls> host permission, granted from the options page; without it, the Worker
