@@ -56,13 +56,14 @@
         itemid: String(itemid),
         shopid: String(shopid),
         name: node.name ?? node.title ?? null,
+        stock_display: node.stock_display ?? null, // e.g. "售完" or the number left
         variants: node.models
           .filter((m) => price(m) != null)
           .map((m) => ({
             modelid: String(m.modelid ?? m.model_id ?? ""),
             name: m.name ?? null,
             price: price(m) / 100000,
-            stock: m.stock ?? m.normal_stock ?? m.stock_info?.normal_stock ?? null,
+            in_stock: m.has_stock ?? m.stock_info?.has_stock ?? null,
           })),
         url: `https://shopee.tw/product/${shopid}/${itemid}`,
       });
@@ -99,11 +100,12 @@
     if (e.source !== window || e.data?.source !== "linkscout-shopee") return;
     // Options first: on a product page the same item also shows up as a plain row, and the
     // plain row would otherwise mark it as already seen.
+    const pageShop = e.data.data?.data?.shop_detailed?.name ?? e.data.data?.data?.shop_info?.name ?? null;
     const withVariants = variantRows(e.data.data).filter(
       (r) => r.variants.length && !seen.has(`${r.itemid}:v`) && seen.add(`${r.itemid}:v`),
     );
     if (withVariants.length) {
-      send(withVariants.map((r) => ({ ...r, kind: "variants" })), () => {
+      send(withVariants.map((r) => ({ ...r, shop_name: pageShop, kind: "variants" })), () => {
         const n = withVariants.reduce((a, r) => a + r.variants.length, 0);
         variantNote = `（這頁 ${n} 個規格的價格已記錄）`;
         showBadge();
