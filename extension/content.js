@@ -106,10 +106,7 @@ async function fetchArticle(url) {
   const res = await chrome.runtime.sendMessage({ type: "fetchHtml", url });
   if (!res?.html) return null;
 
-  // DOMParser documents are inert: no scripts run and nothing loads. A <base> tag still gets
-  // applied, and the search page's CSP (Google: base-uri 'self') reports it as an error; the
-  // text extraction doesn't need it, so drop it first.
-  const doc = new DOMParser().parseFromString(res.html.replace(/<base\b[^>]*>/gi, ""), "text/html");
+  const doc = new DOMParser().parseFromString(inertHtml(res.html), "text/html");
   const enough = (md) => md && md.replace(/\s+/g, "").length >= MIN_ARTICLE_CHARS;
 
   // The publisher's own article text for search engines, where present, beats Readability's
@@ -121,6 +118,18 @@ async function fetchArticle(url) {
   const article = new Readability(doc).parse(); // consumes doc, so it runs last
   const markdown = article?.content && articleMarkdown(article.content);
   return enough(markdown) ? { title: article.title || doc.title, markdown, via: "browser" } : null;
+}
+
+/**
+ * DOMParser documents are inert: no scripts run and nothing loads. Chrome still checks the
+ * search page's CSP while parsing, though, and reports every <base> tag (Google: base-uri
+ * 'self') and inline event handler attribute (onclick=, onerror=; Readability re-parses
+ * them again) as a blocked violation. Text extraction needs neither, so drop them first.
+ */
+function inertHtml(html) {
+  return html
+    .replace(/<base\b[^>]*>/gi, "")
+    .replace(/<[a-z][^>]*>/gi, (tag) => tag.replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, ""));
 }
 
 /** articleBody and headline from the page's JSON-LD (schema.org NewsArticle and kin). */
@@ -174,7 +183,7 @@ const CONTAINERS = /^(DIV|SECTION|ARTICLE|MAIN|HEADER|FOOTER|ASIDE|FIGURE|UL|OL)
  * are bare text separated by blank lines or <br><br> rather than wrapped in <p>.
  */
 function articleMarkdown(html) {
-  const root = new DOMParser().parseFromString(html, "text/html").body;
+  const root = new DOMParser().parseFromString(inertHtml(html), "text/html").body;
   const text = (el) => el.textContent.replace(/\s+/g, " ").trim();
   const out = [];
   const walk = (el) => {
