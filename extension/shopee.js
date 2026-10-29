@@ -21,6 +21,8 @@
 
   function visible(el) {
     if (!el || document.visibilityState !== "visible") return false;
+    // display: contents has no box of its own (Shopee's card links); judge by its children.
+    if (getComputedStyle(el).display === "contents") return [...el.children].some(visible);
     if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true })) return false;
     const rect = el.getBoundingClientRect();
     const style = getComputedStyle(el);
@@ -29,24 +31,81 @@
       style.visibility === "visible" && style.display !== "none";
   }
 
-  // Only an entire line containing a TWD price/range qualifies. Multiple price
-  // lines (e.g. a sale plus the old price) are ambiguous: skip rather than guess.
-  function priceFromText(text) {
-    const number = "(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?";
-    const currency = "(?:NT\\s*)?\\$";
-    const pattern = new RegExp(`^${currency}\\s*(${number})(?:\\s*[-–~～]\\s*(?:${currency}\\s*)?(${number}))?$`, "i");
-    const prices = text.split(/\n/).map((line) => line.trim()).filter(Boolean)
-      .map((line) => line.match(pattern)).filter(Boolean);
-    if (prices.length !== 1) return null;
-    const price = Number(prices[0][1].replaceAll(",", ""));
-    const max = prices[0][2] ? Number(prices[0][2].replaceAll(",", "")) : null;
+  // Visible and not marked aria-hidden (Shopee keeps duplicate hidden price copies).
+  function shown(el) {
+    return visible(el) && !el.closest('[aria-hidden="true"]');
+  }
+
+  const NUMBER = "(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?";
+  const CURRENCY = "(?:NT)?\\$";
+  // Matched against an element's whole text with whitespace removed, because
+  // Shopee splits "$" and the amount into separate flex items.
+  const PRICE = new RegExp(`^${CURRENCY}(${NUMBER})(?:[-–~～](?:${CURRENCY})?(${NUMBER}))?$`, "i");
+
+  // Adds node to found if its entire text is a TWD price/range. Nodes come in
+  // document order, so an outer match comes first and covers the spans inside it.
+  function addPrice(found, node) {
+    if (found.some((f) => f.node.contains(node))) return;
+    const text = node.textContent.replace(/\s+/g, "");
+    if (PRICE.test(text) && shown(node)) found.push({ node, text });
+  }
+
+  // Different visible prices (e.g. a sale plus the old price) are ambiguous:
+  // skip rather than guess.
+  function onePrice(found) {
+    if (new Set(found.map((f) => f.text)).size !== 1) return null;
+    const [, low, high] = found[0].text.match(PRICE);
+    const price = Number(low.replaceAll(",", ""));
+    const max = high ? Number(high.replaceAll(",", "")) : null;
     if (!Number.isFinite(price) || (max !== null && (!Number.isFinite(max) || max < price))) return null;
     return { price, price_max: max };
   }
 
+  function priceIn(el) {
+    const found = [];
+    for (const node of [el, ...el.querySelectorAll("*")]) addPrice(found, node);
+    return onePrice(found);
+  }
+
+  const LINKS = 'a[href*="-i."], a[href*="/product/"]';
+
+  // Product pages: the prices after the title and before the next heading or
+  // product link. Instalment, shipping and coupon amounts (e.g. a "$30" late-
+  // delivery coupon) sit under later headings such as 分期0利率 and 運送.
+  function priceAfter(heading) {
+    const walker = document.createTreeWalker(document.body, 1 /* NodeFilter.SHOW_ELEMENT */);
+    walker.currentNode = heading;
+    const found = [];
+    for (let node = walker.nextNode(), n = 0; node && n < 1000; node = walker.nextNode(), n++) {
+      if (heading.contains(node)) continue;
+      if (node.matches(`h1, h2, ${LINKS}`)) break;
+      addPrice(found, node);
+    }
+    return onePrice(found);
+  }
+
+  function ownText(el) {
+    return [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join("").trim();
+  }
+
+  // A card's name: its heading, or else the first visible text in the card (Shopee
+  // search cards put the title in a plain div after a badge image). If that first
+  // text is too short or is a price, skip the card rather than take later text
+  // such as "已售出 10".
+  function nameIn(el) {
+    const heading = el.querySelector('h3, h2, [role="heading"]');
+    if (heading) return visible(heading) ? heading.innerText.trim() : null;
+    for (const node of el.querySelectorAll("*")) {
+      const text = ownText(node);
+      if (!text || !shown(node)) continue;
+      return text.length >= 6 && !PRICE.test(text.replace(/\s+/g, "")) ? text : null;
+    }
+    return null;
+  }
+
   function row(el, ids, name) {
     if (!visible(el) || !name) return null;
-    const prices = priceFromText(el.innerText);
+    const prices = priceIn(el);
     if (!prices) return null;
     return { ...ids, name, ...prices, shop_name: null, sold: null, stock: null,
       location: null, official: null };
@@ -54,30 +113,21 @@
 
   function collect() {
     const items = new Map();
-    for (const link of document.querySelectorAll('a[href*="-i."], a[href*="/product/"]')) {
+    for (const link of document.querySelectorAll(LINKS)) {
       const ids = productUrl(link.href);
       if (!ids || !visible(link)) continue;
-      // Require a visible heading; never substitute hidden metadata/image alt.
-      const heading = link.querySelector('h3, h2, [role="heading"]');
-      if (!visible(heading)) continue;
-      const item = row(link, ids, heading.innerText.trim());
+      // Rendered text only; never substitute hidden metadata/image alt.
+      const item = row(link, ids, nameIn(link));
       if (item) items.set(`${item.shopid}:${item.itemid}`, item);
     }
 
     const ids = productUrl(location.href);
     const heading = document.querySelector("h1");
-    if (ids && visible(heading)) {
-      // Search a few parents for a sibling price, stopping before recommendations.
-      let section = heading.parentElement;
-      for (let depth = 0; section && depth < 4; depth++, section = section.parentElement) {
-        if (section === document.body || section === document.documentElement ||
-            section.querySelector('a[href*="-i."], a[href*="/product/"]')) break;
-        const item = row(section, ids, heading.innerText.trim());
-        if (item) {
-          items.set(`${item.shopid}:${item.itemid}`, item);
-          break;
-        }
-      }
+    const name = heading && shown(heading) ? heading.innerText.trim() : "";
+    const prices = ids && name ? priceAfter(heading) : null;
+    if (prices) {
+      items.set(`${ids.shopid}:${ids.itemid}`, { ...ids, name, ...prices, shop_name: null, sold: null,
+        stock: null, location: null, official: null });
     }
     return [...items.values()];
   }

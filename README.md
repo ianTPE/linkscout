@@ -77,7 +77,13 @@ So in fast mode (a switch on the options page, which asks for Chrome's optional 
 ## Shopee capture
 
 Shopee capture runs in Chrome's isolated world after the page loads. It reads rendered
-product links/headings and unambiguous TWD price lines from elements in the viewport.
+product links, titles (a heading, or else the card's first visible text) and unambiguous
+TWD prices from elements in the viewport. Shopee's card links are `display: contents`
+and split "$" from the amount, so visibility is judged by a link's children and prices
+by an element's whole text with whitespace removed; `aria-hidden` copies are ignored.
+On a product page the price is taken from after the `h1` title and before the next
+heading or product link, so instalment, shipping and coupon amounts are not mistaken
+for it.
 It does not replace `fetch`/XHR, inject main-world scripts, send window messages,
 add page UI, click, scroll, or request Shopee APIs. Reads are throttled to at most
 once per 1.2 seconds after page changes, scrolling, resizing, or returning to the tab;
