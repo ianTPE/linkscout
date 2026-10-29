@@ -1,11 +1,15 @@
 // Isolated world only: read rendered text without changing the page, wrapping
 // network APIs, reading page state, or emitting window messages.
 (() => {
-  const saved = new Map();
-  let total = 0;
+  const saved = new Map(); // row key → last saved JSON
+  const savedItems = new Set(); // shopid:itemid, for the toolbar count
+  const recent = []; // last saved rows, for the toolbar popup
   let timer;
   let sending = false;
   let retryAfter = 0;
+  let failed = false;
+  let lastStatus = "";
+  let pending = ""; // an option row read once, waiting for a second read to agree
 
   function productUrl(href) {
     try {
@@ -36,6 +40,13 @@
     return visible(el) && !el.closest('[aria-hidden="true"]');
   }
 
+  // A struck-through amount is the old price shown next to a sale price.
+  function struck(el) {
+    const lined = (e) => (getComputedStyle(e).textDecorationLine ?? "").includes("line-through");
+    for (let e = el, i = 0; e && i < 3; e = e.parentElement, i++) if (lined(e)) return true;
+    return [...el.querySelectorAll("*")].some(lined);
+  }
+
   const NUMBER = "(?:\\d{1,3}(?:,\\d{3})+|\\d+)(?:\\.\\d{1,2})?";
   const CURRENCY = "(?:NT)?\\$";
   // Matched against an element's whole text with whitespace removed, because
@@ -47,11 +58,11 @@
   function addPrice(found, node) {
     if (found.some((f) => f.node.contains(node))) return;
     const text = node.textContent.replace(/\s+/g, "");
-    if (PRICE.test(text) && shown(node)) found.push({ node, text });
+    if (PRICE.test(text) && shown(node) && !struck(node)) found.push({ node, text });
   }
 
-  // Different visible prices (e.g. a sale plus the old price) are ambiguous:
-  // skip rather than guess.
+  // Different visible prices (e.g. two prices without one struck through) are
+  // ambiguous: skip rather than guess.
   function onePrice(found) {
     if (new Set(found.map((f) => f.text)).size !== 1) return null;
     const [, low, high] = found[0].text.match(PRICE);
@@ -67,21 +78,54 @@
     return onePrice(found);
   }
 
+  // "已售出 342" on search cards, "1,000+ 已售出" on product pages; 萬 is 10,000.
+  // A "+" (lower bound) is recorded as the number shown.
+  const SOLD = /^(?:已售出([\d,.]+)(萬)?\+?|([\d,.]+)(萬)?\+?已售出)$/;
+
+  function soldFrom(text) {
+    const m = text.replace(/\s+/g, "").match(SOLD);
+    if (!m) return null;
+    const n = Number((m[1] ?? m[3]).replaceAll(",", "")) * ((m[2] ?? m[4]) ? 10_000 : 1);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  }
+
+  function soldIn(el) {
+    for (const node of el.querySelectorAll("*")) {
+      const n = soldFrom(node.textContent);
+      if (n !== null && shown(node)) return n;
+    }
+    return null;
+  }
+
   const LINKS = 'a[href*="-i."], a[href*="/product/"]';
 
-  // Product pages: the prices after the title and before the next heading or
-  // product link. Instalment, shipping and coupon amounts (e.g. a "$30" late-
-  // delivery coupon) sit under later headings such as 分期0利率 and 運送.
-  function priceAfter(heading) {
+  // Product pages: the prices and sales count after the title and before the next
+  // heading or product link. Instalment, shipping and coupon amounts (e.g. a "$30"
+  // late-delivery coupon) sit under later headings such as 分期0利率 and 運送.
+  function afterTitle(heading) {
     const walker = document.createTreeWalker(document.body, 1 /* NodeFilter.SHOW_ELEMENT */);
     walker.currentNode = heading;
     const found = [];
+    let sold = null;
     for (let node = walker.nextNode(), n = 0; node && n < 1000; node = walker.nextNode(), n++) {
       if (heading.contains(node)) continue;
       if (node.matches(`h1, h2, ${LINKS}`)) break;
       addPrice(found, node);
+      if (sold === null) {
+        const s = soldFrom(node.textContent);
+        if (s !== null && shown(node)) sold = s;
+      }
     }
-    return onePrice(found);
+    return { prices: onePrice(found), sold };
+  }
+
+  // Option buttons the person selected on a product page (Shopee marks them
+  // selection-box-selected). Read only; nothing here clicks.
+  function selectedOptions() {
+    return [...document.querySelectorAll('button[class*="selection-box-selected"]')]
+      .filter(shown)
+      .map((b) => (b.getAttribute("aria-label") || b.textContent).trim())
+      .filter(Boolean);
   }
 
   function ownText(el) {
@@ -103,65 +147,102 @@
     return null;
   }
 
-  function row(el, ids, name) {
-    if (!visible(el) || !name) return null;
-    const prices = priceIn(el);
-    if (!prices) return null;
-    return { ...ids, name, ...prices, shop_name: null, sold: null, stock: null,
-      location: null, official: null };
+  function item(ids, name, prices, sold) {
+    return { ...ids, name, ...prices, shop_name: null, sold, stock: null, location: null, official: null };
   }
 
+  // Returns the rows to save and, on a product page, what was read there (for the popup).
   function collect() {
     const items = new Map();
     for (const link of document.querySelectorAll(LINKS)) {
       const ids = productUrl(link.href);
       if (!ids || !visible(link)) continue;
       // Rendered text only; never substitute hidden metadata/image alt.
-      const item = row(link, ids, nameIn(link));
-      if (item) items.set(`${item.shopid}:${item.itemid}`, item);
+      const name = nameIn(link);
+      const prices = name && priceIn(link);
+      if (prices) items.set(`${ids.shopid}:${ids.itemid}`, item(ids, name, prices, soldIn(link)));
     }
 
     const ids = productUrl(location.href);
     const heading = document.querySelector("h1");
-    const name = heading && shown(heading) ? heading.innerText.trim() : "";
-    const prices = ids && name ? priceAfter(heading) : null;
-    if (prices) {
-      items.set(`${ids.shopid}:${ids.itemid}`, { ...ids, name, ...prices, shop_name: null, sold: null,
-        stock: null, location: null, official: null });
+    const name = ids && heading && shown(heading) ? heading.innerText.trim() : "";
+    if (!name) return { items: [...items.values()], product: null, productRow: null };
+    const { prices, sold } = afterTitle(heading);
+    const options = selectedOptions();
+    const product = { name, price: prices?.price ?? null, price_max: prices?.price_max ?? null, sold, options, variant: null };
+    let productRow = null;
+    if (prices && !options.length) {
+      productRow = item(ids, name, prices, sold);
+    } else if (prices && prices.price_max === null) {
+      // With options selected the page shows that option's price. Saved as a
+      // one-option variants row; the monitor merges options picked one at a time.
+      product.variant = { name: options.join(" / "), price: prices.price, in_stock: null };
+      productRow = { ...ids, kind: "variants", partial: true, name, sold, variants: [product.variant] };
     }
-    return [...items.values()];
+    if (productRow) items.set(rowKey(productRow), productRow);
+    return { items: [...items.values()], product, productRow };
+  }
+
+  function rowKey(row) {
+    return row.kind === "variants" ? `${row.shopid}:${row.itemid}:${row.variants[0].name}` : `${row.shopid}:${row.itemid}`;
+  }
+
+  // Toolbar badge and popup only: no status nodes/attributes added to the page.
+  function report(product, productRow) {
+    if (product) product.saved = !!productRow && saved.get(rowKey(productRow)) === JSON.stringify(productRow);
+    const status = { type: "shopeeStatus", total: savedItems.size, error: failed, product, recent: recent.slice(-8) };
+    const json = JSON.stringify(status);
+    if (json === lastStatus) return;
+    lastStatus = json;
+    chrome.runtime.sendMessage(status).catch(() => {});
   }
 
   async function scan() {
     timer = undefined;
-    if (sending || document.visibilityState !== "visible" || Date.now() < retryAfter) return;
-    const items = collect().filter((item) => saved.get(`${item.shopid}:${item.itemid}`) !== JSON.stringify(item));
-    if (!items.length) return;
+    if (sending || document.visibilityState !== "visible") return;
+    let { items, product, productRow } = collect();
+    // Shopee marks a newly selected option before it updates the price, so one read
+    // can pair the new option with the old price. Save an option only once the next
+    // read agrees.
+    if (productRow?.kind === "variants") {
+      const json = JSON.stringify(productRow);
+      if (json !== pending) {
+        pending = json;
+        items = items.filter((row) => row !== productRow);
+        productRow = null;
+        schedule();
+      }
+    }
+    const fresh = items.filter((row) => saved.get(rowKey(row)) !== JSON.stringify(row));
+    if (!fresh.length || Date.now() < retryAfter) return report(product, productRow);
     sending = true;
     try {
-      const result = await chrome.runtime.sendMessage({ type: "shopeeCapture", page: location.href, items });
+      const result = await chrome.runtime.sendMessage({ type: "shopeeCapture", page: location.href, items: fresh });
       if (!result?.ok) throw new Error("Local receiver unavailable");
-      for (const item of items) {
-        const key = `${item.shopid}:${item.itemid}`;
-        if (!saved.has(key)) total++;
-        saved.set(key, JSON.stringify(item));
+      failed = false;
+      for (const row of fresh) {
+        saved.set(rowKey(row), JSON.stringify(row));
+        savedItems.add(`${row.shopid}:${row.itemid}`);
+        recent.push({ name: row.name, price: row.kind === "variants" ? row.variants[0].price : row.price,
+          price_max: row.kind === "variants" ? null : row.price_max, sold: row.sold,
+          variant: row.kind === "variants" ? row.variants[0].name : null });
       }
-      // Browser toolbar only: no status nodes/attributes added to the page.
-      await chrome.runtime.sendMessage({ type: "shopeeStatus", total });
+      recent.splice(0, recent.length - 8);
     } catch {
+      failed = true;
       retryAfter = Date.now() + 30_000;
-      chrome.runtime.sendMessage({ type: "shopeeStatus", error: true }).catch(() => {});
       // Retry on a later page/scroll event; no messages in the page console.
     } finally {
       sending = false;
     }
+    report(product, productRow);
   }
 
   function schedule() {
     if (timer === undefined) timer = setTimeout(scan, 1200);
   }
 
-  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
   window.addEventListener("scroll", schedule, { passive: true });
   window.addEventListener("resize", schedule, { passive: true });
   document.addEventListener("visibilitychange", schedule);

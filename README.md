@@ -83,7 +83,22 @@ and split "$" from the amount, so visibility is judged by a link's children and 
 by an element's whole text with whitespace removed; `aria-hidden` copies are ignored.
 On a product page the price is taken from after the `h1` title and before the next
 heading or product link, so instalment, shipping and coupon amounts are not mistaken
-for it.
+for it. Struck-through amounts (an old price beside a sale price) are not prices.
+The visible sales count ("已售出 342", "1,000+ 已售出"; 萬 = 10,000) is recorded too.
+
+When the person selects an option on a product page (Shopee marks the button
+`selection-box-selected`) and the page then shows a single price, that option and
+price are saved as a `kind: "variants"`, `partial: true` row; the monitor merges
+options picked one at a time. Nothing is clicked for the person. Shopee marks the
+new option selected before it updates the price, so an option is saved only when
+a second read about 1.2 s later agrees; until then the toolbar badge shows an amber
+"…", and "✓" once saved.
+
+Clicking the toolbar icon opens a popup (`popup.html`) showing what this tab recorded:
+the item count, the product page's price and whether the selected option was saved
+(or what is missing, such as another option group still unselected), and the last
+rows saved. The status is kept in `chrome.storage.session` per tab and cleared when
+the tab reloads or closes.
 It does not replace `fetch`/XHR, inject main-world scripts, send window messages,
 add page UI, click, scroll, or request Shopee APIs. Reads are throttled to at most
 once per 1.2 seconds after page changes, scrolling, resizing, or returning to the tab;
@@ -91,9 +106,10 @@ background tabs are skipped. Saved rows go only to the local receiver at
 `http://localhost:8788/shopee`. The pinned extension icon shows the number of unique
 items saved during this page visit, or `!` if saving fails (30-second backoff).
 
-This deliberately records less than the old API capture: full variant lists, stock,
-sales, seller names and location are not extracted. Cards without visible headings,
-unsupported layouts, and ambiguous price displays are skipped rather than guessed.
+This deliberately records less than the old API capture: full variant lists (only
+options the person selects), stock, seller names and location are not extracted.
+Cards without a readable title, unsupported layouts, and ambiguous price displays
+are skipped rather than guessed.
 Changed prices are saved again; unchanged rows are deduplicated only after a successful save.
 The search-result HTML fetcher and Worker fetchers also reject direct `shopee.tw`
 and its subdomain URLs, including in fast mode. Redirecting third-party URLs are

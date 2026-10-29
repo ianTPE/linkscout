@@ -28,6 +28,7 @@ function node(tagName, attrs = {}, ...kids) {
     get innerText() { return el.textContent; },
     descendants() { return el.children.flatMap((c) => [c, ...c.descendants()]); },
     matches: (selector) => matches(el, selector),
+    getAttribute: (name) => attrs[name] ?? null,
     querySelectorAll: (selector) => el.descendants().filter((d) => matches(d, selector)),
     querySelector: (selector) => el.querySelectorAll(selector)[0] ?? null,
     closest(selector) {
@@ -59,11 +60,11 @@ function node(tagName, attrs = {}, ...kids) {
 // amount in separate spans, sales and location as extra text.
 const price = (amount, attrs = {}) => node("div", attrs, node("span", {}, "$"), node("span", {}, amount));
 
-function card({ name = "測試商品 10ml", prices = [price("1,299")], ...attrs } = {}) {
+function card({ name = "測試商品 10ml", prices = [price("1,299")], sold = "已售出 10", ...attrs } = {}) {
   return node("a", { href: "https://shopee.tw/測試商品-i.123.456", ...attrs },
     node("div", {}, node("img"), name),
     ...prices,
-    node("div", {}, "已售出 10"), node("span", {}, "高雄市"));
+    node("div", {}, sold), node("span", {}, "高雄市"));
 }
 
 // Element-only TreeWalker over body's descendants in document order.
@@ -88,7 +89,8 @@ function harness({ cards = [card()], heading = null, body = node("body"), href =
   const network = () => { throw new Error("Page network must not be used"); };
   const document = {
     visibilityState: "visible", documentElement: Object.freeze({}), body,
-    querySelectorAll: () => cards,
+    // Card links come from the cards list; other lookups (option buttons) search body.
+    querySelectorAll: (selector) => selector.startsWith("a[") ? cards : body.querySelectorAll(selector),
     querySelector: () => heading,
     createTreeWalker: (root, whatToShow) => { assert.equal(whatToShow, 1); return treeWalker(root); },
     addEventListener: (event, callback) => { listeners[event] = callback; },
@@ -103,7 +105,8 @@ function harness({ cards = [card()], heading = null, body = node("body"), href =
   vm.runInNewContext(source, {
     document, window, XMLHttpRequest: xhr, fetch: network,
     URL, location: { href }, innerHeight: 800, innerWidth: 1200,
-    getComputedStyle: (el) => ({ visibility: "visible", display: el.attrs.display ?? "block" }),
+    getComputedStyle: (el) => ({ visibility: "visible", display: el.attrs.display ?? "block",
+      textDecorationLine: el.attrs.strike ? "line-through" : "none" }),
     MutationObserver: class {
       constructor(callback) { observer = callback; }
       observe() {}
@@ -140,7 +143,7 @@ test("captures rendered rows without page mutation, window messages, or network 
   assert.equal(h.captures().length, 1);
   assert.deepEqual(h.captures()[0].items[0], {
     shopid: "123", itemid: "456", url: "https://shopee.tw/product/123/456", name: "測試商品 10ml",
-    price: 1299, price_max: null, shop_name: null, sold: null, stock: null, location: null, official: null,
+    price: 1299, price_max: null, shop_name: null, sold: 10, stock: null, location: null, official: null,
   });
   assert.equal(h.messages[1].type, "shopeeStatus");
   assert.equal(h.messages[1].total, 1);
@@ -253,6 +256,73 @@ test("records changed prices without inflating the unique-item count", async () 
   assert.equal(h.messages.at(-1).total, 1);
 });
 
+test("reads sales counts from cards and product pages", async () => {
+  const h = harness({ cards: [card({ sold: "已售出 1.2萬+" })] });
+  await h.tick();
+  assert.equal(h.captures()[0].items[0].sold, 12000);
+  const page = productPage(node("div", {}, node("span", {}, "1,000+"), "已售出"), price("590"));
+  const p = harness({ cards: [], ...page, href: "https://shopee.tw/product/123/456" });
+  await p.tick();
+  assert.equal(p.captures()[0].items[0].sold, 1000);
+});
+
+test("ignores a struck-through old price next to the sale price", async () => {
+  const h = harness({ cards: [card({ prices: [price("650", { strike: true }), price("590")] })] });
+  await h.tick();
+  assert.equal(h.captures()[0].items[0].price, 590);
+});
+
+function optionButton(label, selected) {
+  return node("button", { class: `lK5dVS selection-box-${selected ? "selected" : "unselected"}`, "aria-label": label },
+    node("span", {}, label));
+}
+
+test("records the option the person selected with its single price", async () => {
+  const options = node("section", {}, node("h2", {}, "容量"), optionButton("10ml", true), optionButton("30ml", false));
+  const page = productPage(price("590"));
+  const body = node("body", {}, ...page.body.children, options);
+  const h = harness({ cards: [], heading: page.heading, body, href: "https://shopee.tw/product/123/456" });
+  await h.tick();
+  assert.equal(h.captures().length, 0); // first read waits for a second one to agree
+  assert.equal(h.messages.at(-1).product.saved, false);
+  await h.tick();
+  const rows = h.captures()[0].items;
+  assert.equal(rows.length, 1);
+  assert.deepEqual({ kind: rows[0].kind, partial: rows[0].partial, variants: rows[0].variants },
+    { kind: "variants", partial: true, variants: [{ name: "10ml", price: 590, in_stock: null }] });
+  const status = h.messages.at(-1);
+  assert.equal(status.type, "shopeeStatus");
+  assert.deepEqual(status.product.variant, { name: "10ml", price: 590, in_stock: null });
+  assert.equal(status.product.saved, true);
+});
+
+test("does not pair a newly selected option with the previous option's price", async () => {
+  const amount = node("span", {}, "1,141");
+  const body = node("body", {}, node("h1", {}, "四胜肽賦活養髮液 公司貨"),
+    node("div", {}, node("span", {}, "$"), amount),
+    node("section", {}, node("h2", {}, "規格"), optionButton("90ml", true)));
+  const h = harness({ cards: [], heading: body.children[0], body, href: "https://shopee.tw/product/123/456" });
+  await h.tick(); // option already marked 90ml, price still the 45ml one
+  amount.childNodes[0].textContent = "1,835";
+  h.mutate();
+  await h.tick();
+  await h.tick();
+  const saved = h.captures().flatMap((c) => c.items).map((r) => r.variants[0]);
+  assert.deepEqual(saved, [{ name: "90ml", price: 1835, in_stock: null }]);
+});
+
+test("saves nothing from a product page while a selected option still shows a range", async () => {
+  const page = productPage(node("div", {}, "$219 - $799"));
+  const body = node("body", {}, ...page.body.children, node("section", {}, node("h2", {}, "顏色"), optionButton("紅", true)));
+  const h = harness({ cards: [], heading: page.heading, body, href: "https://shopee.tw/product/123/456" });
+  await h.tick();
+  assert.equal(h.captures().length, 0);
+  const status = h.messages.at(-1);
+  assert.deepEqual(status.product.options, ["紅"]);
+  assert.equal(status.product.variant, null);
+  assert.equal(status.product.saved, false);
+});
+
 test("failed saves are retried after backoff and are not marked as saved", async () => {
   const h = harness({ fail: true });
   await h.tick();
@@ -270,11 +340,14 @@ function background() {
   const listeners = [];
   const requests = [];
   const badges = [];
+  const session = [];
   const context = vm.createContext({
     importScripts() {}, URL, AbortSignal,
     chrome: {
-      storage: { sync: { get: async (defaults) => defaults } },
+      storage: { sync: { get: async (defaults) => defaults },
+        session: { set: async (value) => { session.push(value); }, remove: async () => {} } },
       runtime: { onMessage: { addListener: (listener) => listeners.push(listener) } },
+      tabs: { onUpdated: { addListener() {} }, onRemoved: { addListener() {} } },
       permissions: { contains: async () => true },
       action: Object.fromEntries(["setBadgeText", "setBadgeBackgroundColor", "setTitle"].map((key) =>
         [key, async (value) => { badges.push({ key, ...value }); }])),
@@ -282,7 +355,7 @@ function background() {
     fetch: async (url, options) => { requests.push({ url, options }); return { ok: true, json: async () => ({ results: [] }) }; },
   });
   vm.runInContext(readFileSync(join(root, "background.js"), "utf8"), context);
-  return { context, listeners, requests, badges };
+  return { context, listeners, requests, badges, session };
 }
 
 test("background saves only to the local receiver and uses browser toolbar status", async () => {
@@ -295,6 +368,17 @@ test("background saves only to the local receiver and uses browser toolbar statu
   await new Promise((resolve) => handler({ type: "shopeeStatus", total: 7 }, sender, resolve));
   assert.equal(b.requests.length, 1);
   assert.ok(b.badges.some((badge) => badge.tabId === 42 && badge.text === "7"));
+  await new Promise((resolve) => handler({ type: "shopeeStatus", total: 1, product: { name: "x".repeat(500), price: 590,
+    price_max: null, sold: 3, saved: true, options: ["10ml", 5], variant: { name: "10ml", price: 590 }, evil: "<b>" },
+  recent: [{ name: "商品", price: "590" }] }, sender, resolve));
+  const stored = b.session.at(-1)["shopee:42"];
+  assert.ok(b.badges.some((badge) => badge.text === "✓"));
+  await new Promise((resolve) => handler({ type: "shopeeStatus", total: 1, product: { options: ["10ml"], saved: false } }, sender, resolve));
+  assert.equal(b.badges.filter((badge) => badge.key === "setBadgeText").at(-1).text, "…");
+  assert.equal(stored.product.name.length, 200);
+  assert.deepEqual(stored.product.options, ["10ml"]);
+  assert.equal(stored.product.evil, undefined);
+  assert.equal(stored.recent[0].price, null);
   handler({ type: "shopeeCapture" }, { url: "https://example.com", tab: { id: 42 } }, () => {});
   assert.equal(b.requests.length, 1);
 });
