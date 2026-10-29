@@ -58,6 +58,10 @@ interface RawPage {
 }
 
 export async function fetchPage(env: FetchEnv, url: string): Promise<CleanPage & { source: Source }> {
+  const host = new URL(url).hostname;
+  if (host === "shopee.tw" || host.endsWith(".shopee.tw")) {
+    throw new Error("Shopee pages are read only while you browse; automatic fetching is disabled");
+  }
   const errors: string[] = [];
   for (const [source, fetcher] of [
     ["kitesurf", fetchViaKitesurf],

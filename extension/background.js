@@ -14,10 +14,27 @@ const DEFAULTS = {
 };
 /** One headline per line in the options page. */
 const lines = (text) => text.split("\n").map((l) => l.trim()).filter(Boolean);
+const SHOPEE_FETCH_ERROR = "Shopee pages are read only while you browse";
+function isShopeeUrl(url) {
+  try {
+    const host = new URL(url).hostname;
+    return host === "shopee.tw" || host.endsWith(".shopee.tw");
+  } catch {
+    return false;
+  }
+}
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type !== "score") return;
   (async () => {
+    // Filter here too: an older deployed Worker must not fetch Shopee on behalf
+    // of the updated extension when it appears in search results.
+    const excluded = msg.urls.filter(isShopeeUrl).map((url) => ({ url, error: SHOPEE_FETCH_ERROR }));
+    const urls = msg.urls.filter((url) => !isShopeeUrl(url));
+    if (!urls.length) {
+      sendResponse({ results: excluded });
+      return;
+    }
     const { workerUrl, token, jobProfile, monitorProfile, monitorInclude, monitorExclude } =
       await chrome.storage.sync.get(DEFAULTS);
     try {
@@ -28,7 +45,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           query: msg.query,
-          urls: msg.urls,
+          urls,
           pages: msg.pages,
           news: msg.news === true,
           // Each profile only goes along in its own mode: the job profile for job sites,
@@ -44,7 +61,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }),
       });
       if (!res.ok) throw new Error(`Worker ${res.status}: ${await res.text()}`);
-      sendResponse(await res.json());
+      const result = await res.json();
+      sendResponse({ ...result, results: [...result.results, ...excluded] });
     } catch (err) {
       sendResponse({ error: err?.name === "TimeoutError" ? L("timeout") : String(err) });
     }
@@ -58,8 +76,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 const CAPTURE_URL = "http://localhost:8788/shopee";
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type !== "shopeeCapture") return;
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== "shopeeCapture" && msg?.type !== "shopeeStatus") return;
+  if (new URL(sender.url ?? "https://invalid.local").origin !== "https://shopee.tw" || sender.tab?.id == null) return;
+  if (msg.type === "shopeeStatus") {
+    const total = Number.isSafeInteger(msg.total) && msg.total >= 0 ? msg.total : 0;
+    Promise.all([
+      chrome.action.setBadgeText({ tabId: sender.tab.id, text: msg.error ? "!" : total > 999 ? "999+" : String(total) }),
+      chrome.action.setBadgeBackgroundColor({ tabId: sender.tab.id, color: msg.error ? "#a33a22" : "#1f6f43" }),
+      chrome.action.setTitle({ tabId: sender.tab.id, title: msg.error ? "LinkScout：本機商品接收器無法連線，尚未儲存" : `LinkScout：此頁瀏覽期間已記錄 ${total} 件商品（僅畫面文字）` }),
+    ]).then(() => sendResponse({ ok: true }), () => sendResponse({ ok: false }));
+    return true;
+  }
   fetch(CAPTURE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -93,6 +121,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 });
 
 async function fetchHtml(url) {
+  if (isShopeeUrl(url)) return { error: SHOPEE_FETCH_ERROR };
   if (!(await chrome.permissions.contains(ALL_SITES))) return { error: "fast mode off" };
   // No cookies: the page as a logged-out visitor sees it, like Browser Run would.
   const res = await fetch(url, { credentials: "omit", signal: AbortSignal.timeout(PAGE_TIMEOUT_MS) });

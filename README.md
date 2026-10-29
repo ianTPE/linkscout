@@ -74,6 +74,30 @@ So in fast mode (a switch on the options page, which asks for Chrome's optional 
 
 `worker/scripts/timing.ts` and `worker/scripts/compare.ts` reproduce these measurements (`npx vite-node scripts/timing.ts urls.txt "query"`); they read keys from `.env` and never print them.
 
+## Shopee capture
+
+Shopee capture runs in Chrome's isolated world after the page loads. It reads rendered
+product links/headings and unambiguous TWD price lines from elements in the viewport.
+It does not replace `fetch`/XHR, inject main-world scripts, send window messages,
+add page UI, click, scroll, or request Shopee APIs. Reads are throttled to at most
+once per 1.2 seconds after page changes, scrolling, resizing, or returning to the tab;
+background tabs are skipped. Saved rows go only to the local receiver at
+`http://localhost:8788/shopee`. The pinned extension icon shows the number of unique
+items saved during this page visit, or `!` if saving fails (30-second backoff).
+
+This deliberately records less than the old API capture: full variant lists, stock,
+sales, seller names and location are not extracted. Cards without visible headings,
+unsupported layouts, and ambiguous price displays are skipped rather than guessed.
+Changed prices are saved again; unchanged rows are deduplicated only after a successful save.
+The search-result HTML fetcher and Worker fetchers also reject direct `shopee.tw`
+and its subdomain URLs, including in fast mode. Redirecting third-party URLs are
+not covered by this direct-URL check.
+
+This removes the previous explicit page modifications; it does not guarantee that
+a site's security checks will accept the browser. After updating, reload the extension
+at `chrome://extensions` and **close/reopen existing Shopee tabs**: old tabs retain
+the previous network wrappers and listeners until their document is replaced.
+
 ## Scoring
 
 Search results (Google, Bing, DuckDuckGo, including their News tabs) are judged by `worker/src/judge.ts`, which asks Jev six independent questions in one `systemOne` request:

@@ -11,6 +11,6 @@
     "dev": "npm run dev -w worker",
     "deploy": "npm run deploy -w worker",
     "typecheck": "npm run typecheck -w worker",
-    "test": "npm test -w worker"
+    "test": "node --test extension/test/*.test.cjs && npm test -w worker"
   }
 }
