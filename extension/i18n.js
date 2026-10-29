@@ -57,6 +57,7 @@ const STRINGS = {
     sortByScore: "Sort by score",
 
     panelHead: (n, loading) => `LinkScout ranking (${n}${loading ? `, ${loading} scoring` : ""})`,
+    panelNewest: (n) => `Jobs, newest first (${n})`,
     panelScoring: "Scoring…",
     panelEmpty: "No scores yet",
     panelScreened: (n) => `${n} screened out (listed last)`,
@@ -116,6 +117,7 @@ const STRINGS = {
     sortByScore: "依分數排序",
 
     panelHead: (n, loading) => `LinkScout 排行（${n}${loading ? `，評分中 ${loading}` : ""}）`,
+    panelNewest: (n) => `職缺，最新在前（${n}）`,
     panelScoring: "評分中…",
     panelEmpty: "還沒有評分結果",
     panelScreened: (n) => `初篩略過 ${n} 筆（列在最後）`,

@@ -14,6 +14,8 @@
 //                  results get a news type (report, press release, sponsored…) instead of a category
 //   panel          optional: true shows a side panel ranking every scored result (needed on
 //                  sites that can't be reordered in place; elsewhere a scannable summary)
+//   score          optional: false lists results in the panel newest first (by meta's jobNo)
+//                  instead of asking Jev to score them
 //   meta(a, url)   optional: { title, sub } for a result's panel row; default is the link text
 //   keepGroups     optional: true (or a function) to sort a block of several results as one unit,
 //                  by its best score, without touching its inside
@@ -70,9 +72,10 @@ const ENGINES = {
     query: query104,
     links: 'h2 a[href*="/job/"]',
     canonical: (u) => u.origin + u.pathname, // drop ?jobsource=…
-    content: fetch104Job,
-    // 104's list is virtual: ~22 elements are recycled for whichever jobs are on screen,
-    // so sorting them would shuffle jobs around while scrolling. The panel ranks them instead.
+    // Jev's job scores didn't help in practice, so jobs aren't scored; the panel lists them
+    // newest first (104's own list is virtual: ~22 elements recycled while scrolling, so it
+    // can't be reordered in place).
+    score: false,
     reorder: false,
     panel: true,
     meta: (a) => ({
@@ -84,7 +87,6 @@ const ENGINES = {
       // The date a job was last refreshed, "10/05"; promoted jobs show an icon here instead.
       date: cardDate(a.closest(".job-summary")?.querySelector(".date-container")?.textContent),
     }),
-    mode: "job", // score as job postings against the profile from the options page
   },
 };
 
@@ -242,6 +244,8 @@ function query104() {
 /**
  * 104 job pages sit behind a Cloudflare challenge that Browser Run and Jina often fail.
  * Its own JSON API is same-origin here and already passes in the user's browser.
+ * Unused while 104 jobs aren't scored (score: false); set content: fetch104Job and
+ * mode: "job" on the 104 engine to score them again.
  */
 async function fetch104Job(url) {
   const id = new URL(url).pathname.split("/").pop();
@@ -363,6 +367,10 @@ function scan() {
       const m = engine.meta ? engine.meta(a, url) : { title: a.textContent.trim(), sub: "" };
       meta.set(url, m);
       if (m.jobNo && m.date) noteJob(m.jobNo, m.date);
+    }
+    if (engine.score === false) {
+      schedulePanel();
+      continue;
     }
     if (!results.has(url)) {
       results.set(url, { loading: true });
@@ -897,6 +905,7 @@ function drawPanel() {
       drawPanel();
     });
   }
+  if (engine.score === false) return drawNewestPanel();
   const all = [...results].map(([url, r]) => ({ url, r, m: meta.get(url) ?? { title: url, sub: "" } }));
   const byScore = (a, b) => b.r.score - a.r.score;
   const ranked = all.filter((e) => typeof e.r.score === "number" && !e.r.screened).sort(byScore);
@@ -904,15 +913,7 @@ function drawPanel() {
   const loading = all.filter((e) => e.r.loading).length;
   const failed = all.filter((e) => e.r.error).length;
 
-  const head = document.createElement("button");
-  head.className = "ls-panel-head";
-  head.textContent = `${panelCollapsed ? "▸" : "▾"} ${L("panelHead", ranked.length, loading)}`;
-  head.onclick = () => {
-    panelCollapsed = !panelCollapsed;
-    if (alive()) chrome.storage.local.set({ panelCollapsed });
-    drawPanel();
-  };
-  panel.classList.toggle("ls-collapsed", panelCollapsed);
+  const head = panelHead(L("panelHead", ranked.length, loading));
   if (panelCollapsed) return panel.replaceChildren(head);
 
   const list = document.createElement("div");
@@ -926,6 +927,61 @@ function drawPanel() {
     engine.mode === "job" ? L("panelJobsNote") : L("panelPageNote"),
   ].filter(Boolean);
   panel.replaceChildren(head, list, panelNote(notes.join(" · ")));
+}
+
+/** The panel header; clicking it collapses or expands the panel. */
+function panelHead(text) {
+  const head = document.createElement("button");
+  head.className = "ls-panel-head";
+  head.textContent = `${panelCollapsed ? "▸" : "▾"} ${text}`;
+  head.onclick = () => {
+    panelCollapsed = !panelCollapsed;
+    if (alive()) chrome.storage.local.set({ panelCollapsed });
+    drawPanel();
+  };
+  panel.classList.toggle("ls-collapsed", panelCollapsed);
+  return head;
+}
+
+/** Unscored results (104 jobs), newest first: job numbers only grow, so a higher one was posted later. */
+function drawNewestPanel() {
+  const head = panelHead(L("panelNewest", meta.size));
+  if (panelCollapsed) return panel.replaceChildren(head);
+  const jobs = [...meta].map(([url, m]) => ({ url, m })).sort((a, b) => (b.m.jobNo || 0) - (a.m.jobNo || 0));
+  const list = document.createElement("div");
+  list.className = "ls-panel-list";
+  for (const { url, m } of jobs) {
+    const row = document.createElement("a");
+    row.className = "ls-panel-row";
+    row.href = url;
+    row.target = "_blank";
+    row.rel = "noopener";
+    const text = document.createElement("span");
+    text.className = "ls-panel-text";
+    const title = document.createElement("span");
+    title.className = "ls-panel-title";
+    title.textContent = m.title;
+    text.append(title);
+    const posted = postedBy(m.jobNo);
+    const subText = [posted && !isNewJob(m.jobNo) && L("postedBy", shortDate(posted)), m.sub].filter(Boolean).join(" · ");
+    if (subText) {
+      const sub = document.createElement("span");
+      sub.className = "ls-panel-sub";
+      sub.textContent = subText;
+      text.append(sub);
+    }
+    const tags = [isNewJob(m.jobNo) && badge(L("newJob"), "ls-few"), fewApplicantsBadge(url)].filter(Boolean);
+    if (tags.length) {
+      const line = document.createElement("span");
+      line.className = "ls-panel-tags";
+      line.append(...tags);
+      text.append(line);
+    }
+    row.append(text);
+    list.append(row);
+  }
+  if (!jobs.length) list.append(panelNote(L("panelEmpty")));
+  panel.replaceChildren(head, list, panelNote(L("panelJobsNote")));
 }
 
 function panelRow({ url, r, m }) {
