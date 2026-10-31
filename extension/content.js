@@ -129,10 +129,17 @@ async function fetchArticle(url) {
  * them again) as a blocked violation. Text extraction needs neither, so drop them first.
  */
 function inertHtml(html) {
-  return html
-    .replace(/<base\b[^>]*>/gi, "")
-    .replace(/<[a-z][^>]*>/gi, (tag) => tag.replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, ""));
+  return html.replace(/<base\b(?:"[^"]*"|'[^']*'|[^"'>])*>/gi, "").replace(TAG, (tag, name, attrs) => {
+    if (!/\bon/i.test(attrs)) return tag;
+    const kept = [...attrs.matchAll(ATTR)].map((m) => m[0]).filter((attr) => !/^on/i.test(attr));
+    return `<${name}${kept.map((attr) => ` ${attr}`).join("")}${/\/\s*$/.test(attrs) ? " /" : ""}>`;
+  });
 }
+// A start tag, read the way the HTML tokenizer does: a quoted value may contain ">"
+// (title="a > b"), and attributes may follow "/" or a quoted value with no space
+// (<img/onerror=…>, <a href="x"onclick=…>).
+const TAG = /<([a-z][^\s/>]*)((?:"[^"]*"|'[^']*'|[^"'>])*)>/gi;
+const ATTR = /[^\s"'>/=][^\s"'>/=]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]*))?/g;
 
 /** articleBody and headline from the page's JSON-LD (schema.org NewsArticle and kin). */
 function ldArticle(doc) {
