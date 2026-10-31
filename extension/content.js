@@ -17,6 +17,9 @@
 //   score          optional: false lists results in the panel newest first (by meta's jobNo)
 //                  instead of asking Jev to score them
 //   meta(a, url)   optional: { title, sub } for a result's panel row; default is the link text
+//   frontier       optional: known { "YYYY-MM-DD": jobNo } points (see postedBy), to start from
+//   listKey()      optional: a string naming the current search; when it changes (a single-page
+//                  site starting a new search) the panel forgets the jobs of the old one
 //   keepGroups     optional: true (or a function) to sort a block of several results as one unit,
 //                  by its best score, without touching its inside
 
@@ -87,6 +90,42 @@ const ENGINES = {
       // The date a job was last refreshed, "10/05"; promoted jobs show an icon here instead.
       date: cardDate(a.closest(".job-summary")?.querySelector(".date-container")?.textContent),
     }),
+    // From 570 jobs seen on 2026-10-06, so it works before much browsing.
+    frontier: { "2026-08-27": 15363346, "2026-09-30": 15400358, "2026-10-02": 15414586 },
+  },
+  // 1111 works like 104: the card date is the last refresh, job numbers (/job/132824741/)
+  // only grow. The list is paged (30 a page) inside a single-page app, so the script runs on
+  // every 1111 page and only picks up search-list cards. Job pages answer scripted requests
+  // with an empty 204, so only the list cards are read.
+  "www.1111.com.tw": {
+    query: () => document.title.match(/「([^」]+)」/)?.[1] ?? param("ks")(),
+    links: '.job-card a[href*="/job/"][href*="mid=searchlist"]',
+    canonical: (u) => u.origin + u.pathname, // drop ?mid=searchlist
+    listKey: () => {
+      const q = new URLSearchParams(location.search);
+      q.delete("page");
+      q.sort();
+      return location.pathname + "?" + q;
+    },
+    score: false,
+    reorder: false,
+    panel: true,
+    meta: (a) => {
+      const card = a.closest(".job-card");
+      const text = card?.innerText ?? "";
+      return {
+        title: a.textContent.trim(),
+        // "鑫祺人力資源有限公司｜人力派遣╱人力供應": the company, without its industry.
+        sub: card?.querySelector('a[href*="/corp/"]')?.textContent.split("｜")[0].trim() ?? "",
+        // "1 ~ 5 人應徵" → "1~5"; seen buckets are 1~5, 6~10 and 11~30.
+        applicants: text.match(/([\d~\s]+?)\s*人應徵/)?.[1].replace(/\s+/g, ""),
+        jobNo: parseInt(new URL(a.href).pathname.match(/\/job\/(\d+)/)?.[1], 10),
+        // The date the job was last refreshed, on a line of its own: "10 / 27".
+        date: cardDate(text.match(/^\s*(\d{1,2}\s*\/\s*\d{1,2})\s*$/m)?.[1]),
+      };
+    },
+    // The posting dates (JSON-LD datePosted) of two job pages, 2026-10-31.
+    frontier: { "2026-08-17": 132810699, "2026-10-07": 132846129 },
   },
 };
 
@@ -364,8 +403,15 @@ function realUrl(a) {
   }
 }
 
+let listKey = null;
+
 function scan() {
   if (!engine) return;
+  if (engine.listKey && engine.listKey() !== listKey) {
+    if (listKey !== null) meta.clear();
+    listKey = engine.listKey();
+    schedulePanel();
+  }
   for (const a of document.querySelectorAll(linkSelector())) {
     const url = realUrl(a);
     if (!url || !/^https?:/.test(url) || shown.get(a) === url) continue;
@@ -559,13 +605,14 @@ function pageTooltip(d) {
   ].join("\n");
 }
 
-// 104 shows how many applied in the last two weeks. Few applicants means a better chance,
-// but it says nothing about fit, so it's a badge, not points. Only in the panel: the job
-// card already shows the count next to the result.
-const FEW_APPLICANTS = ["0~5", "6~10"];
+// 104 and 1111 show how many applied (104: in the last two weeks). Few applicants means a
+// better chance, but it says nothing about fit, so it's a badge, not points. Only in the
+// panel: the job card already shows the count next to the result.
+const FEWEST_APPLICANTS = ["0", "0~5", "1~5"]; // 104 starts at 0~5, 1111 at 1~5
 const fewApplicantsBadge = (url) => {
   const n = meta.get(url)?.applicants;
-  return FEW_APPLICANTS.includes(n) ? badge(`${n} ${L("applicants")}`, n === "0~5" ? "ls-few" : "ls-few ls-few-soft") : null;
+  if (n !== "6~10" && !FEWEST_APPLICANTS.includes(n)) return null;
+  return badge(`${n} ${L("applicants")}`, n === "6~10" ? "ls-few ls-few-soft" : "ls-few");
 };
 
 // When was a job first posted? 104 only shows the date it was last refreshed, and employers
@@ -573,19 +620,20 @@ const fewApplicantsBadge = (url) => {
 // numbered N refreshed on day D means every job numbered up to N existed by D. Each list card
 // adds such a point, and the highest number seen for each day is kept: a job was posted by
 // the first day whose number reaches it, and is new when its number is above everything
-// known from NEW_DAYS ago. The more 104 pages are seen, the tighter this gets.
+// known from NEW_DAYS ago. The more pages are seen, the tighter this gets. Each site numbers
+// its jobs on its own, so each keeps its own points (104's under the original key).
 const NEW_DAYS = 7;
 const KEEP_DAYS = 180;
-// From 570 jobs seen on 2026-10-06, so it works before much browsing.
-let jobFrontier = { "2026-08-27": 15363346, "2026-09-30": 15400358, "2026-10-02": 15414586 };
+let jobFrontier = { ...engine?.frontier };
+const FRONTIER_KEY = location.hostname === "www.104.com.tw" ? "jobFrontier" : `jobFrontier:${location.hostname}`;
 let frontierTimer = null;
 const isoDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const shortDate = (iso) => `${+iso.slice(5, 7)}/${+iso.slice(8)}`;
 const daysAgo = (n) => isoDate(new Date(Date.now() - n * 86400000));
 
-/** "10/05" → "2026-10-05"; a date after today is from last year. */
+/** "10/05" or "10 / 05" → "2026-10-05"; a date after today is from last year. */
 function cardDate(text) {
-  const md = text?.match(/(\d{1,2})\/(\d{1,2})/);
+  const md = text?.match(/(\d{1,2})\s*\/\s*(\d{1,2})/);
   if (!md) return undefined;
   const now = new Date();
   const d = new Date(now.getFullYear(), md[1] - 1, md[2]);
@@ -598,10 +646,12 @@ function mergeFrontier(into, from) {
   return into;
 }
 
-chrome.storage.local
-  .get({ jobFrontier: {} })
-  .then((v) => mergeFrontier(jobFrontier, v.jobFrontier))
-  .catch(() => {});
+if (engine?.frontier) {
+  chrome.storage.local
+    .get({ [FRONTIER_KEY]: {} })
+    .then((v) => mergeFrontier(jobFrontier, v[FRONTIER_KEY]))
+    .catch(() => {});
+}
 
 function noteJob(jobNo, day) {
   if (jobFrontier[day] >= jobNo) return;
@@ -612,11 +662,11 @@ function noteJob(jobNo, day) {
 async function saveFrontier() {
   frontierTimer = null;
   try {
-    const { jobFrontier: stored } = await chrome.storage.local.get({ jobFrontier: {} });
+    const { [FRONTIER_KEY]: stored } = await chrome.storage.local.get({ [FRONTIER_KEY]: {} });
     const all = mergeFrontier(stored, jobFrontier);
     const oldest = daysAgo(KEEP_DAYS);
     for (const day of Object.keys(all)) if (day < oldest) delete all[day];
-    await chrome.storage.local.set({ jobFrontier: all });
+    await chrome.storage.local.set({ [FRONTIER_KEY]: all });
   } catch {} // extension reloaded: the next page load saves again
 }
 
@@ -631,9 +681,12 @@ function postedBy(jobNo) {
   return null;
 }
 
+/** New: numbered above every job known to exist NEW_DAYS ago. Without such a point, unknown (not new). */
 const isNewJob = (jobNo) => {
-  const day = postedBy(jobNo);
-  return !!jobNo && (!day || day > daysAgo(NEW_DAYS));
+  const cutoff = daysAgo(NEW_DAYS);
+  let old = 0;
+  for (const [day, n] of Object.entries(jobFrontier)) if (day <= cutoff) old = Math.max(old, n);
+  return !!jobNo && !!old && jobNo > old;
 };
 
 // Jobs whose day-to-day work AI tools speed up a lot: a strength for someone who uses them.
@@ -950,7 +1003,7 @@ function panelHead(text) {
   return head;
 }
 
-/** Unscored results (104 jobs), newest first: job numbers only grow, so a higher one was posted later. */
+/** Unscored results (104 and 1111 jobs), newest first: job numbers only grow, so a higher one was posted later. */
 function drawNewestPanel() {
   const head = panelHead(L("panelNewest", meta.size));
   if (panelCollapsed) return panel.replaceChildren(head);
