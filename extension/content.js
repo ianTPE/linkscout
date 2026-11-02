@@ -16,6 +16,10 @@
 //                  sites that can't be reordered in place; elsewhere a scannable summary)
 //   score          optional: false lists results in the panel newest first (by meta's jobNo)
 //                  instead of asking Jev to score them
+//   order          optional, with score false: { by(a, b) comparing two metas, head: i18n key }
+//                  to list them some other way than newest first
+//   listKey()      optional: names the current search; when it changes (a single-page site
+//                  starting a new search) the panel forgets the results of the old one
 //   meta(a, url)   optional: { title, sub } for a result's panel row; default is the link text
 //   keepGroups     optional: true (or a function) to sort a block of several results as one unit,
 //                  by its best score, without touching its inside
@@ -88,7 +92,51 @@ const ENGINES = {
       date: cardDate(a.closest(".job-summary")?.querySelector(".date-container")?.textContent),
     }),
   },
+  // Cake has no job numbers or posting dates to sort by (its own "最新" sort is by last
+  // update, with keyword matches still pulled up), but each card shows how many times the
+  // job was viewed. The panel lists the least viewed first: fewer people saw it, so likely
+  // fewer applied. The list is paged inside a single-page app, so the script runs on every
+  // Cake page and only reads /jobs search cards.
+  "www.cake.me": {
+    query: () => decodeURIComponent(location.pathname.split("/")[2] ?? ""),
+    links: () => (location.pathname.startsWith("/jobs") ? 'h2 a[href*="/companies/"][href*="/jobs/"]' : ":not(*)"),
+    canonical: (u) => u.origin + u.pathname,
+    listKey: () => {
+      const q = new URLSearchParams(location.search);
+      for (const k of ["page", "ref"]) q.delete(k);
+      q.sort();
+      return location.pathname + "?" + q;
+    },
+    score: false,
+    reorder: false,
+    panel: true,
+    order: { by: (a, b) => (a.views ?? Infinity) - (b.views ?? Infinity), head: "panelFewestViews" },
+    meta: (a) => {
+      // The card: the largest ancestor holding only this job's title.
+      let card = a;
+      while (card.parentElement && card.parentElement.querySelectorAll("h2 a[href*='/jobs/']").length === 1) card = card.parentElement;
+      // The view count sits next to an eye icon: "4,500+".
+      let eye = card.querySelector(".fa-eye");
+      while (eye && eye !== card && !/\d/.test(eye.textContent)) eye = eye.parentElement;
+      const viewsText = eye && eye !== card ? eye.textContent.trim() : null;
+      const company = [...card.querySelectorAll("a")].find((x) => /^\/companies\/[^/]+\/?$/.test(x.pathname) && x.textContent.trim());
+      const active = card.innerText.match(/雇主活躍於\s*([^\n]+)/)?.[1].trim();
+      return {
+        title: a.textContent.trim(),
+        sub: [company?.textContent.trim(), active && L("employerActive", active)].filter(Boolean).join(" · "),
+        views: cakeViews(viewsText),
+        viewsText,
+      };
+    },
+  },
 };
+
+/** "4,500+" → 4500, "1.2萬" → 12000, "85" → 85; anything else → undefined. */
+function cakeViews(text) {
+  const m = text?.replace(/,/g, "").match(/^(\d+(?:\.\d+)?)\s*(萬|k)?\+?$/i);
+  if (!m) return undefined;
+  return Math.round(parseFloat(m[1]) * (m[2] === "萬" ? 10000 : m[2] ? 1000 : 1));
+}
 
 // ---------------------------------------------------------------------------
 // Fast mode: the browser fetches each result page itself (via the background, which
@@ -364,8 +412,15 @@ function realUrl(a) {
   }
 }
 
+let listKey = null;
+
 function scan() {
   if (!engine) return;
+  if (engine.listKey && engine.listKey() !== listKey) {
+    if (listKey !== null) meta.clear();
+    listKey = engine.listKey();
+    schedulePanel();
+  }
   for (const a of document.querySelectorAll(linkSelector())) {
     const url = realUrl(a);
     if (!url || !/^https?:/.test(url) || shown.get(a) === url) continue;
@@ -950,11 +1005,15 @@ function panelHead(text) {
   return head;
 }
 
-/** Unscored results (104 jobs), newest first: job numbers only grow, so a higher one was posted later. */
+/**
+ * Unscored results, newest first (104: job numbers only grow, so a higher one was posted later),
+ * or in the engine's own order (Cake: fewest views first).
+ */
 function drawNewestPanel() {
-  const head = panelHead(L("panelNewest", meta.size));
+  const head = panelHead(L(engine.order?.head ?? "panelNewest", meta.size));
   if (panelCollapsed) return panel.replaceChildren(head);
-  const jobs = [...meta].map(([url, m]) => ({ url, m })).sort((a, b) => (b.m.jobNo || 0) - (a.m.jobNo || 0));
+  const by = engine.order?.by ?? ((a, b) => (b.jobNo || 0) - (a.jobNo || 0));
+  const jobs = [...meta].map(([url, m]) => ({ url, m })).sort((a, b) => by(a.m, b.m));
   const list = document.createElement("div");
   list.className = "ls-panel-list";
   for (const { url, m } of jobs) {
@@ -970,7 +1029,9 @@ function drawNewestPanel() {
     title.textContent = m.title;
     text.append(title);
     const posted = postedBy(m.jobNo);
-    const subText = [posted && !isNewJob(m.jobNo) && L("postedBy", shortDate(posted)), m.sub].filter(Boolean).join(" · ");
+    const subText = [m.viewsText && L("views", m.viewsText), posted && !isNewJob(m.jobNo) && L("postedBy", shortDate(posted)), m.sub]
+      .filter(Boolean)
+      .join(" · ");
     if (subText) {
       const sub = document.createElement("span");
       sub.className = "ls-panel-sub";
