@@ -89,12 +89,23 @@
     return Number.isFinite(n) ? Math.round(n) : null;
   }
 
-  function soldIn(el) {
+  function soldIn(el, from = soldFrom) {
     for (const node of el.querySelectorAll("*")) {
-      const n = soldFrom(node.textContent);
+      const n = from(node.textContent);
       if (n !== null && shown(node)) return n;
     }
     return null;
+  }
+
+  // Since 2026-11 most search cards show "月銷量 720" (sales in the last month)
+  // instead of the all-time "已售出"; kept as monthly_sold, never mixed into sold.
+  const MONTHLY = /^月銷量([\d,.]+)(萬)?\+?$/;
+
+  function monthlyFrom(text) {
+    const m = text.replace(/\s+/g, "").match(MONTHLY);
+    if (!m) return null;
+    const n = Number(m[1].replaceAll(",", "")) * (m[2] ? 10_000 : 1);
+    return Number.isFinite(n) ? Math.round(n) : null;
   }
 
   const LINKS = 'a[href*="-i."], a[href*="/product/"]';
@@ -147,8 +158,8 @@
     return null;
   }
 
-  function item(ids, name, prices, sold) {
-    return { ...ids, name, ...prices, shop_name: null, sold, stock: null, location: null, official: null };
+  function item(ids, name, prices, sold, monthly_sold = null) {
+    return { ...ids, name, ...prices, shop_name: null, sold, monthly_sold, stock: null, location: null, official: null };
   }
 
   // Returns the rows to save and, on a product page, what was read there (for the popup).
@@ -160,7 +171,7 @@
       // Rendered text only; never substitute hidden metadata/image alt.
       const name = nameIn(link);
       const prices = name && priceIn(link);
-      if (prices) items.set(`${ids.shopid}:${ids.itemid}`, item(ids, name, prices, soldIn(link)));
+      if (prices) items.set(`${ids.shopid}:${ids.itemid}`, item(ids, name, prices, soldIn(link), soldIn(link, monthlyFrom)));
     }
 
     const ids = productUrl(location.href);
@@ -194,11 +205,31 @@
     const json = JSON.stringify(status);
     if (json === lastStatus) return;
     lastStatus = json;
-    chrome.runtime.sendMessage(status).catch(() => {});
+    try {
+      chrome.runtime.sendMessage(status).catch(() => {});
+    } catch {
+      stop(); // reloaded or updated extension: this page's old script can no longer reach it
+    }
+  }
+
+  // After the extension is reloaded, scripts left in open tabs lose their connection
+  // (chrome.runtime.id becomes undefined and sendMessage throws). Stop watching the page
+  // quietly; a page refresh starts the new script.
+  function alive() {
+    return !!globalThis.chrome?.runtime?.id;
+  }
+
+  function stop() {
+    observer.disconnect();
+    window.removeEventListener("scroll", schedule);
+    window.removeEventListener("resize", schedule);
+    document.removeEventListener("visibilitychange", schedule);
+    clearTimeout(timer);
   }
 
   async function scan() {
     timer = undefined;
+    if (!alive()) return stop();
     if (sending || document.visibilityState !== "visible") return;
     let { items, product, productRow } = collect();
     // Shopee marks a newly selected option before it updates the price, so one read
@@ -224,7 +255,7 @@
         saved.set(rowKey(row), JSON.stringify(row));
         savedItems.add(`${row.shopid}:${row.itemid}`);
         recent.push({ name: row.name, price: row.kind === "variants" ? row.variants[0].price : row.price,
-          price_max: row.kind === "variants" ? null : row.price_max, sold: row.sold,
+          price_max: row.kind === "variants" ? null : row.price_max, sold: row.sold, monthly_sold: row.monthly_sold ?? null,
           variant: row.kind === "variants" ? row.variants[0].name : null });
       }
       recent.splice(0, recent.length - 8);
@@ -242,7 +273,8 @@
     if (timer === undefined) timer = setTimeout(scan, 1200);
   }
 
-  new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["class"] });
   window.addEventListener("scroll", schedule, { passive: true });
   window.addEventListener("resize", schedule, { passive: true });
   document.addEventListener("visibilitychange", schedule);

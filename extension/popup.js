@@ -14,6 +14,7 @@ function add(parent, tag, text, cls) {
 const money = (n) => `$${n.toLocaleString("en-US")}`;
 const priceText = (r) => r.price == null ? "看不出價格" : r.price_max != null ? `${money(r.price)} – ${money(r.price_max)}` : money(r.price);
 const soldText = (r) => r.sold != null ? `，已售出 ${r.sold.toLocaleString("en-US")}` : "";
+const monthlyText = (r) => r.monthly_sold != null ? `，月銷量 ${r.monthly_sold.toLocaleString("en-US")}` : "";
 
 function product(p) {
   const box = add(out, "div", null, "box");
@@ -52,7 +53,7 @@ async function main() {
     for (const r of s.recent.slice().reverse()) {
       const li = add(ul, "li");
       add(li, "span", r.name, "name");
-      add(li, "span", (r.variant ? `規格「${r.variant}」 ` : "") + priceText(r) + soldText(r), "muted");
+      add(li, "span", (r.variant ? `規格「${r.variant}」 ` : "") + priceText(r) + soldText(r) + monthlyText(r), "muted");
     }
   }
   add(out, "p", `更新於 ${new Date(s.at).toLocaleTimeString("zh-TW")}`, "muted");

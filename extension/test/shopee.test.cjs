@@ -113,7 +113,7 @@ function harness({ cards = [card()], heading = null, body = node("body"), href =
     },
     setTimeout: (callback, delay) => { assert.equal(delay, 1200); timers.push(callback); return timers.length; },
     Date: { now: () => now },
-    chrome: { runtime: { sendMessage: async (msg) => {
+    chrome: { runtime: { id: "test", sendMessage: async (msg) => {
       messages.push(JSON.parse(JSON.stringify(msg)));
       return msg.type === "shopeeCapture" && fail ? { error: "offline" } : { ok: true };
     } } },
@@ -143,7 +143,7 @@ test("captures rendered rows without page mutation, window messages, or network 
   assert.equal(h.captures().length, 1);
   assert.deepEqual(h.captures()[0].items[0], {
     shopid: "123", itemid: "456", url: "https://shopee.tw/product/123/456", name: "測試商品 10ml",
-    price: 1299, price_max: null, shop_name: null, sold: 10, stock: null, location: null, official: null,
+    price: 1299, price_max: null, shop_name: null, sold: 10, monthly_sold: null, stock: null, location: null, official: null,
   });
   assert.equal(h.messages[1].type, "shopeeStatus");
   assert.equal(h.messages[1].total, 1);
@@ -264,6 +264,16 @@ test("reads sales counts from cards and product pages", async () => {
   const p = harness({ cards: [], ...page, href: "https://shopee.tw/product/123/456" });
   await p.tick();
   assert.equal(p.captures()[0].items[0].sold, 1000);
+});
+
+test("reads 月銷量 on search cards as monthly_sold, separate from sold", async () => {
+  const h = harness({ cards: [card({ sold: "月銷量 720" })] });
+  await h.tick();
+  assert.equal(h.captures()[0].items[0].monthly_sold, 720);
+  assert.equal(h.captures()[0].items[0].sold, null);
+  const w = harness({ cards: [card({ sold: "月銷量 1.2萬+" })] });
+  await w.tick();
+  assert.equal(w.captures()[0].items[0].monthly_sold, 12000);
 });
 
 test("ignores a struck-through old price next to the sale price", async () => {
