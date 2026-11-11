@@ -246,3 +246,49 @@ function decode(bytes, contentType) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Reddit capture: posts on Reddit pages the person scrolled through (reddit.js), for
+// the hn-daily Reddit list. Re-sent when a post's score or comment count changes.
+
+const REDDIT_CAPTURE_URL = "http://localhost:8788/reddit";
+const redditCounts = new Map(); // tabId → post ids saved from that tab (badge)
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== "redditCapture") return;
+  const origin = new URL(sender.url ?? "https://invalid.local").origin;
+  if (!["https://www.reddit.com", "https://old.reddit.com"].includes(origin) || sender.tab?.id == null) return;
+  const text = (v, n) => (typeof v === "string" ? v.slice(0, n) : null);
+  const int = (v) => (Number.isInteger(v) ? v : null);
+  const posts = (Array.isArray(msg.posts) ? msg.posts : []).slice(0, 200).map((p) => ({
+    id: text(p?.id, 20), subreddit: text(p?.subreddit, 60), title: text(p?.title, 300), url: text(p?.url, 300),
+    link: text(p?.link, 500), author: text(p?.author, 40), created: text(p?.created, 40),
+    score: int(p?.score), comments: int(p?.comments),
+  }));
+  const tabId = sender.tab.id;
+  fetch(REDDIT_CAPTURE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page: text(msg.page, 500), listing: text(msg.listing, 100), items: posts }),
+    signal: AbortSignal.timeout(10_000),
+  })
+    .then((res) => {
+      if (res.ok) {
+        const ids = redditCounts.get(tabId) ?? new Set();
+        posts.forEach((p) => ids.add(p.id));
+        redditCounts.set(tabId, ids);
+      }
+      const n = redditCounts.get(tabId)?.size ?? 0;
+      chrome.action.setBadgeText({ tabId, text: res.ok ? String(n) : "!" });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: res.ok ? "#1f6f43" : "#a33a22" });
+      chrome.action.setTitle({ tabId, title: res.ok ? `LinkScout：已記錄這個分頁 ${n} 篇 Reddit 貼文` : "LinkScout：本機接收器無法連線，尚未儲存" });
+      sendResponse(res.ok ? { ok: true } : { error: `HTTP ${res.status}` });
+    })
+    .catch((err) => {
+      chrome.action.setBadgeText({ tabId, text: "!" });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: "#a33a22" });
+      sendResponse({ error: String(err) });
+    });
+  return true;
+});
+
+chrome.tabs?.onRemoved?.addListener((tabId) => redditCounts.delete(tabId));
