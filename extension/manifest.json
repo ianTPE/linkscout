@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "LinkScout",
-  "version": "0.2.15",
-  "description": "Scores search results and job listings before you click, shows the key passage, sorts news into monitoring-report sections, and records Shopee products you browse for price tracking.",
+  "version": "0.2.17",
+  "description": "Scores search results and job listings before you click, shows the key passage, sorts news into monitoring-report sections, and records Shopee products you browse for price tracking, and records PTT and Dcard search results you open for discussion counts.",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",
@@ -32,6 +32,16 @@
     {
       "matches": ["https://shopee.tw/*"],
       "js": ["shopee.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.ptt.cc/bbs/*/search*"],
+      "js": ["ptt.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.dcard.tw/search*"],
+      "js": ["dcard.js"],
       "run_at": "document_idle"
     }
   ],

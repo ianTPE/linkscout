@@ -131,6 +131,76 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 // ---------------------------------------------------------------------------
+// PTT capture: the result list of a board search page the person opened goes to the
+// same local product monitor (ptt.js), to count how much a brand is discussed.
+
+const PTT_CAPTURE_URL = "http://localhost:8788/ptt";
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (msg?.type !== "pttCapture") return;
+  if (new URL(sender.url ?? "https://invalid.local").origin !== "https://www.ptt.cc" || sender.tab?.id == null) return;
+  const text = (v, n) => (typeof v === "string" ? v.slice(0, n) : null);
+  const posts = (Array.isArray(msg.posts) ? msg.posts : []).slice(0, 100).map((p) => ({
+    title: text(p?.title, 200), url: text(p?.url, 300), date: text(p?.date, 10),
+    pushes: Number.isInteger(p?.pushes) ? p.pushes : null, author: text(p?.author, 40),
+  }));
+  const tabId = sender.tab.id;
+  fetch(PTT_CAPTURE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page: text(msg.page, 500), board: text(msg.board, 40), query: text(msg.query, 100),
+      page_no: Number.isInteger(msg.page_no) ? msg.page_no : null, items: posts }),
+    signal: AbortSignal.timeout(10_000),
+  })
+    .then((res) => {
+      chrome.action.setBadgeText({ tabId, text: res.ok ? String(posts.length) : "!" });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: res.ok ? "#1f6f43" : "#a33a22" });
+      chrome.action.setTitle({ tabId, title: res.ok ? `LinkScout：已記錄這頁 ${posts.length} 篇 PTT 搜尋結果` : "LinkScout：本機接收器無法連線，尚未儲存" });
+    })
+    .catch(() => {
+      chrome.action.setBadgeText({ tabId, text: "!" });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: "#a33a22" });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Dcard capture: posts on a post search page the person scrolled through (dcard.js).
+
+const DCARD_CAPTURE_URL = "http://localhost:8788/dcard";
+const dcardCounts = new Map(); // tabId → posts saved from that tab (badge)
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== "dcardCapture") return;
+  if (new URL(sender.url ?? "https://invalid.local").origin !== "https://www.dcard.tw" || sender.tab?.id == null) return;
+  const text = (v, n) => (typeof v === "string" ? v.slice(0, n) : null);
+  const int = (v) => (Number.isInteger(v) ? v : null);
+  const posts = (Array.isArray(msg.posts) ? msg.posts : []).slice(0, 200).map((p) => ({
+    id: text(p?.id, 20), forum: text(p?.forum, 40), title: text(p?.title, 200), url: text(p?.url, 300),
+    created: text(p?.created, 40), likes: int(p?.likes), comments: int(p?.comments),
+  }));
+  const tabId = sender.tab.id;
+  fetch(DCARD_CAPTURE_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page: text(msg.page, 500), query: text(msg.query, 100), sort: text(msg.sort, 20), items: posts }),
+    signal: AbortSignal.timeout(10_000),
+  })
+    .then((res) => {
+      if (res.ok) dcardCounts.set(tabId, (dcardCounts.get(tabId) ?? 0) + posts.length);
+      chrome.action.setBadgeText({ tabId, text: res.ok ? String(dcardCounts.get(tabId)) : "!" });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: res.ok ? "#1f6f43" : "#a33a22" });
+      chrome.action.setTitle({ tabId, title: res.ok ? `LinkScout：已記錄這頁 ${dcardCounts.get(tabId)} 篇 Dcard 文章` : "LinkScout：本機接收器無法連線，尚未儲存" });
+      sendResponse(res.ok ? { ok: true } : { error: `HTTP ${res.status}` });
+    })
+    .catch((err) => {
+      chrome.action.setBadgeText({ tabId, text: "!" });
+      sendResponse({ error: String(err) });
+    });
+  return true;
+});
+chrome.tabs.onRemoved.addListener((tabId) => dcardCounts.delete(tabId));
+
+// ---------------------------------------------------------------------------
 // Fast mode: fetch a result page from the user's browser. News sites answer in well
 // under a second, against 3–30 s through Browser Run or Jina. Needs the optional
 // <all_urls> host permission, granted from the options page; without it, the Worker
@@ -175,3 +245,4 @@ function decode(bytes, contentType) {
     return new TextDecoder("utf-8").decode(bytes);
   }
 }
+
