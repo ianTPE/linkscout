@@ -1,6 +1,8 @@
 // Dcard post search pages (https://www.dcard.tw/search/posts?query=...): records the
 // posts the person scrolled through (forum, title, time, likes, comments) for the local
 // product monitor, which counts how much a brand is discussed each week.
+// Forum pages (https://www.dcard.tw/f/tech) are recorded the same way but sent apart, for
+// hn-daily's daily list of new and popular Dcard threads.
 // Reads the rendered list only; never fetches other pages or follows links.
 
 /** Query and sort from a search page URL, or null for other pages. */
@@ -10,6 +12,17 @@ function dcardSearch(href) {
     const q = url.searchParams.get("query");
     return url.origin === "https://www.dcard.tw" && /^\/search(\/posts)?\/?$/.test(url.pathname) && q
       ? { query: q, sort: url.searchParams.get("sort") || null } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The forum list a page shows ("tech", "tech?tab=latest"), or null for other pages (posts, search). */
+function dcardForum(href) {
+  try {
+    const url = new URL(href);
+    const m = url.pathname.match(/^\/f\/([\w-]+)\/?$/);
+    return url.origin === "https://www.dcard.tw" && m ? m[1] + url.search : null;
   } catch {
     return null;
   }
@@ -44,7 +57,7 @@ function dcardRow(article, base) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { dcardSearch, dcardCount, dcardRow };
+  module.exports = { dcardSearch, dcardForum, dcardCount, dcardRow };
 } else {
   (() => {
     const sent = new Set(); // post ids already sent from this page
@@ -60,14 +73,15 @@ if (typeof module !== "undefined") {
     function scan() {
       timer = undefined;
       if (!globalThis.chrome?.runtime?.id) return stop(); // extension reloaded; a refresh starts the new script
-      if (location.href !== page) { page = location.href; sent.clear(); } // new search in the same tab
+      if (location.href !== page) { page = location.href; sent.clear(); } // Dcard navigates without reloading
       const search = dcardSearch(location.href);
-      if (!search) return;
+      const listing = search ? null : dcardForum(location.href);
+      if (!search && !listing) return;
       const posts = [...document.querySelectorAll("article")]
         .map((a) => dcardRow(a, location.href)).filter((p) => p && !sent.has(p.id));
       if (!posts.length) return;
       try {
-        chrome.runtime.sendMessage({ type: "dcardCapture", page: location.href, ...search, posts })
+        chrome.runtime.sendMessage({ type: "dcardCapture", page: location.href, ...(search ?? { listing }), posts })
           .then((res) => { if (res?.ok) posts.forEach((p) => sent.add(p.id)); }, () => {});
       } catch {
         stop();

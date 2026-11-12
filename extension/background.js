@@ -164,9 +164,11 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 });
 
 // ---------------------------------------------------------------------------
-// Dcard capture: posts on a post search page the person scrolled through (dcard.js).
+// Dcard capture: posts on a post search page or a forum page the person scrolled through
+// (dcard.js). Search results feed the product monitor; forum pages go to their own file.
 
 const DCARD_CAPTURE_URL = "http://localhost:8788/dcard";
+const DCARD_FORUM_URL = "http://localhost:8788/dcard-forum";
 
 // Per-tab badge counts live in chrome.storage.session, not in variables: Chrome stops
 // this service worker after ~30 s idle, which would reset an in-memory count while the
@@ -211,10 +213,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     created: text(p?.created, 40), likes: int(p?.likes), comments: int(p?.comments),
   }));
   const tabId = sender.tab.id;
-  fetch(DCARD_CAPTURE_URL, {
+  const listing = text(msg.listing, 100);
+  fetch(listing ? DCARD_FORUM_URL : DCARD_CAPTURE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ page: text(msg.page, 500), query: text(msg.query, 100), sort: text(msg.sort, 20), items: posts }),
+    body: JSON.stringify(listing ? { page: text(msg.page, 500), listing, items: posts }
+      : { page: text(msg.page, 500), query: text(msg.query, 100), sort: text(msg.sort, 20), items: posts }),
     signal: AbortSignal.timeout(10_000),
   })
     .then(async (res) => {

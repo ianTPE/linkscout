@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { dcardSearch, dcardCount, dcardRow } = require("../dcard.js");
+const { dcardSearch, dcardForum, dcardCount, dcardRow } = require("../dcard.js");
 
 test("search pages only", () => {
   assert.deepEqual(dcardSearch("https://www.dcard.tw/search/posts?query=%E5%90%89%E4%BC%8A%E5%8D%A1%E5%93%87&sort=created"),
@@ -9,6 +9,14 @@ test("search pages only", () => {
   assert.equal(dcardSearch("https://www.dcard.tw/f/girl"), null);
   assert.equal(dcardSearch("https://www.dcard.tw/search/posts"), null);
   assert.equal(dcardSearch("https://evil.example/search/posts?query=a"), null);
+});
+
+test("forum pages", () => {
+  assert.equal(dcardForum("https://www.dcard.tw/f/tech"), "tech");
+  assert.equal(dcardForum("https://www.dcard.tw/f/tech/?tab=latest"), "tech?tab=latest");
+  assert.equal(dcardForum("https://www.dcard.tw/f/tech/p/262426522"), null);
+  assert.equal(dcardForum("https://www.dcard.tw/search/posts?query=a"), null);
+  assert.equal(dcardForum("https://evil.example/f/tech"), null);
 });
 
 test("counts", () => {
