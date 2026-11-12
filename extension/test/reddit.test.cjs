@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { redditListing, redditInt, redditRow } = require("../reddit.js");
+const { redditListing, redditInt, redditRow, redditComment } = require("../reddit.js");
 
 test("listings on Reddit only", () => {
   assert.equal(redditListing("https://www.reddit.com/r/LocalLLaMA/top/?t=day"), "r/LocalLLaMA/top");
@@ -61,4 +61,32 @@ test("not posts", () => {
   assert.equal(redditRow(el("SHREDDIT-POST", { id: "t1_comment", "post-title": "t", permalink: "/r/x/comments/1/" }), base), null);
   assert.equal(redditRow(el("SHREDDIT-POST", { id: "t3_1", "post-title": "", permalink: "/r/x/comments/1/" }), base), null);
   assert.equal(redditRow(el("SHREDDIT-POST", { id: "t3_1", "post-title": "t", permalink: "https://evil.example/" }), base), null);
+});
+
+function comment(attrs) {
+  return { getAttribute: (n) => attrs[n] ?? null };
+}
+const doc = (texts) => ({ getElementById: (id) => (id in texts ? { innerText: texts[id] } : null) });
+
+test("comments on a post page", () => {
+  // Attributes as saved from a real r/ClaudeAI thread (2026-11-12).
+  const reply = comment({
+    thingid: "t1_19sfsdjum0poi", postid: "t3_1xsudl0", parentid: "t1_19sfrk5zkkmps", depth: "1",
+    author: "neuronexmachina", score: "16", created: "2026-11-10T18:47:56.541000+0000",
+    permalink: "/r/ClaudeAI/comments/1xsudl0/comment/19sfsdjum0poi/",
+  });
+  assert.deepEqual(redditComment(reply, doc({ "t1_19sfsdjum0poi-comment-rtjson-content": "  Probably a postinstall script.\n" })), {
+    id: "t1_19sfsdjum0poi", post: "t3_1xsudl0", parent: "t1_19sfrk5zkkmps", depth: 1, author: "neuronexmachina",
+    score: 16, created: "2026-11-10T18:47:56.541000+0000",
+    url: "https://www.reddit.com/r/ClaudeAI/comments/1xsudl0/comment/19sfsdjum0poi/", text: "Probably a postinstall script.",
+  });
+  // A top-level comment's parent is the post; a comment without text keeps text null.
+  const top = redditComment(comment({ thingid: "t1_a", postid: "t3_p", depth: "0", permalink: "/r/x/comments/p/comment/a/" }), doc({}));
+  assert.equal(top.parent, "t3_p");
+  assert.equal(top.text, null);
+  // Long text is cut.
+  const long = redditComment(comment({ thingid: "t1_b", postid: "t3_p", permalink: "/r/x/comments/p/comment/b/" }), doc({ "t1_b-comment-rtjson-content": "x".repeat(5000) }));
+  assert.equal(long.text.length, 2000);
+  assert.equal(redditComment(comment({ thingid: "t3_p", postid: "t3_p", permalink: "/r/x/" }), doc({})), null);
+  assert.equal(redditComment(comment({ thingid: "t1_c", postid: "t3_p", permalink: "https://evil.example/" }), doc({})), null);
 });

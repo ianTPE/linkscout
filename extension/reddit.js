@@ -52,8 +52,30 @@ function redditRow(el, base) {
 
 const REDDIT_POSTS = "shreddit-post, div.thing.link[data-fullname]";
 
+// Comments on a post page (new Reddit only): each loaded <shreddit-comment> carries its
+// id, post, parent, depth, author, score and time as attributes; the text is the element
+// with id "<comment id>-comment-rtjson-content". Only comments already on screen are
+// read; "more replies" is never clicked, so a long thread is recorded only in part.
+const REDDIT_COMMENTS = "shreddit-comment";
+const COMMENT_TEXT_MAX = 2000;
+
+/** One comment: { id, post, parent, depth, author, score, created, url, text }; null if not a comment. */
+function redditComment(el, doc) {
+  const a = (n) => el.getAttribute(n);
+  const id = a("thingid");
+  const post = a("postid");
+  const permalink = a("permalink");
+  if (!/^t1_\w+$/.test(id ?? "") || !/^t3_\w+$/.test(post ?? "") || !permalink?.startsWith("/r/")) return null;
+  const text = doc.getElementById(`${id}-comment-rtjson-content`)?.innerText?.trim() || null;
+  return {
+    id, post, parent: a("parentid") || post, depth: redditInt(a("depth")), author: a("author"),
+    score: redditInt(a("score")), created: a("created"), url: new URL(permalink, "https://www.reddit.com").href,
+    text: text && text.slice(0, COMMENT_TEXT_MAX),
+  };
+}
+
 if (typeof module !== "undefined") {
-  module.exports = { redditListing, redditInt, redditRow, REDDIT_POSTS };
+  module.exports = { redditListing, redditInt, redditRow, redditComment, REDDIT_POSTS };
 } else {
   (() => {
     const sent = new Map(); // post id → "score/comments" already sent from this page
@@ -75,10 +97,18 @@ if (typeof module !== "undefined") {
       const posts = [...document.querySelectorAll(REDDIT_POSTS)]
         .map((el) => redditRow(el, location.href))
         .filter((p) => p && sent.get(p.id) !== `${p.score}/${p.comments}`);
-      if (!posts.length) return;
+      const comments = [...document.querySelectorAll(REDDIT_COMMENTS)]
+        .map((el) => redditComment(el, document))
+        .filter((c) => c && sent.get(c.id) !== `${c.score}/${c.text?.length}`);
       try {
-        chrome.runtime.sendMessage({ type: "redditCapture", page: location.href, listing, posts })
-          .then((res) => { if (res?.ok) posts.forEach((p) => sent.set(p.id, `${p.score}/${p.comments}`)); }, () => {});
+        if (posts.length) {
+          chrome.runtime.sendMessage({ type: "redditCapture", page: location.href, listing, posts })
+            .then((res) => { if (res?.ok) posts.forEach((p) => sent.set(p.id, `${p.score}/${p.comments}`)); }, () => {});
+        }
+        if (comments.length) {
+          chrome.runtime.sendMessage({ type: "redditComments", page: location.href, comments })
+            .then((res) => { if (res?.ok) comments.forEach((c) => sent.set(c.id, `${c.score}/${c.text?.length}`)); }, () => {});
+        }
       } catch {
         stop();
       }

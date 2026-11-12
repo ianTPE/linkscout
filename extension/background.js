@@ -292,3 +292,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 chrome.tabs?.onRemoved?.addListener((tabId) => redditCounts.delete(tabId));
+
+// Comments loaded on a Reddit post page (reddit.js). Saved quietly: the badge keeps
+// counting posts, and only turns to "!" when the receiver can't be reached.
+const REDDIT_COMMENTS_URL = "http://localhost:8788/reddit-comments";
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg?.type !== "redditComments") return;
+  const origin = new URL(sender.url ?? "https://invalid.local").origin;
+  if (!["https://www.reddit.com", "https://old.reddit.com"].includes(origin) || sender.tab?.id == null) return;
+  const text = (v, n) => (typeof v === "string" ? v.slice(0, n) : null);
+  const int = (v) => (Number.isInteger(v) ? v : null);
+  const comments = (Array.isArray(msg.comments) ? msg.comments : []).slice(0, 500).map((c) => ({
+    id: text(c?.id, 20), post: text(c?.post, 20), parent: text(c?.parent, 20), depth: int(c?.depth),
+    author: text(c?.author, 40), score: int(c?.score), created: text(c?.created, 40),
+    url: text(c?.url, 300), text: text(c?.text, 2000),
+  }));
+  const tabId = sender.tab.id;
+  fetch(REDDIT_COMMENTS_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page: text(msg.page, 500), items: comments }),
+    signal: AbortSignal.timeout(10_000),
+  })
+    .then((res) => {
+      if (!res.ok) {
+        chrome.action.setBadgeText({ tabId, text: "!" });
+        chrome.action.setBadgeBackgroundColor({ tabId, color: "#a33a22" });
+      }
+      sendResponse(res.ok ? { ok: true } : { error: `HTTP ${res.status}` });
+    })
+    .catch((err) => {
+      chrome.action.setBadgeText({ tabId, text: "!" });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: "#a33a22" });
+      sendResponse({ error: String(err) });
+    });
+  return true;
+});
