@@ -167,7 +167,39 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 // Dcard capture: posts on a post search page the person scrolled through (dcard.js).
 
 const DCARD_CAPTURE_URL = "http://localhost:8788/dcard";
-const dcardCounts = new Map(); // tabId → posts saved from that tab (badge)
+
+// Per-tab badge counts live in chrome.storage.session, not in variables: Chrome stops
+// this service worker after ~30 s idle, which would reset an in-memory count while the
+// person is still reading the page. Updates to one key run one after another, so two
+// saves finishing together don't overwrite each other. (The queue itself may be lost
+// with the worker; only updates in flight at that moment need it.)
+const tabCountQueue = new Map();
+
+/** Adds to the tab's saved count under `key` and resolves to the new count.
+ *  `add` is a number, or ids to count once each (posts re-sent with new scores). */
+function addTabCount(key, add) {
+  const run = async () => {
+    const old = (await chrome.storage.session.get(key))[key];
+    let value, n;
+    if (Array.isArray(add)) {
+      value = [...new Set([...(Array.isArray(old) ? old : []), ...add])];
+      n = value.length;
+    } else {
+      value = n = (Number.isInteger(old) ? old : 0) + add;
+    }
+    await chrome.storage.session.set({ [key]: value });
+    return n;
+  };
+  const next = (tabCountQueue.get(key) ?? Promise.resolve()).then(run, run);
+  tabCountQueue.set(key, next.catch(() => {}));
+  return next;
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  chrome.storage.session.remove([`dcard:${tabId}`, `reddit:${tabId}`]);
+  tabCountQueue.delete(`dcard:${tabId}`);
+  tabCountQueue.delete(`reddit:${tabId}`);
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== "dcardCapture") return;
@@ -185,11 +217,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     body: JSON.stringify({ page: text(msg.page, 500), query: text(msg.query, 100), sort: text(msg.sort, 20), items: posts }),
     signal: AbortSignal.timeout(10_000),
   })
-    .then((res) => {
-      if (res.ok) dcardCounts.set(tabId, (dcardCounts.get(tabId) ?? 0) + posts.length);
-      chrome.action.setBadgeText({ tabId, text: res.ok ? String(dcardCounts.get(tabId)) : "!" });
+    .then(async (res) => {
+      const n = res.ok ? await addTabCount(`dcard:${tabId}`, posts.length) : 0;
+      chrome.action.setBadgeText({ tabId, text: res.ok ? String(n) : "!" });
       chrome.action.setBadgeBackgroundColor({ tabId, color: res.ok ? "#1f6f43" : "#a33a22" });
-      chrome.action.setTitle({ tabId, title: res.ok ? `LinkScout：已記錄這頁 ${dcardCounts.get(tabId)} 篇 Dcard 文章` : "LinkScout：本機接收器無法連線，尚未儲存" });
+      chrome.action.setTitle({ tabId, title: res.ok ? `LinkScout：已記錄這頁 ${n} 篇 Dcard 文章` : "LinkScout：本機接收器無法連線，尚未儲存" });
       sendResponse(res.ok ? { ok: true } : { error: `HTTP ${res.status}` });
     })
     .catch((err) => {
@@ -198,7 +230,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
   return true;
 });
-chrome.tabs.onRemoved.addListener((tabId) => dcardCounts.delete(tabId));
 
 // ---------------------------------------------------------------------------
 // Fast mode: fetch a result page from the user's browser. News sites answer in well
@@ -251,7 +282,6 @@ function decode(bytes, contentType) {
 // the hn-daily Reddit list. Re-sent when a post's score or comment count changes.
 
 const REDDIT_CAPTURE_URL = "http://localhost:8788/reddit";
-const redditCounts = new Map(); // tabId → post ids saved from that tab (badge)
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type !== "redditCapture") return;
@@ -271,13 +301,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     body: JSON.stringify({ page: text(msg.page, 500), listing: text(msg.listing, 100), items: posts }),
     signal: AbortSignal.timeout(10_000),
   })
-    .then((res) => {
-      if (res.ok) {
-        const ids = redditCounts.get(tabId) ?? new Set();
-        posts.forEach((p) => ids.add(p.id));
-        redditCounts.set(tabId, ids);
-      }
-      const n = redditCounts.get(tabId)?.size ?? 0;
+    .then(async (res) => {
+      const n = res.ok ? await addTabCount(`reddit:${tabId}`, posts.map((p) => p.id)) : 0;
       chrome.action.setBadgeText({ tabId, text: res.ok ? String(n) : "!" });
       chrome.action.setBadgeBackgroundColor({ tabId, color: res.ok ? "#1f6f43" : "#a33a22" });
       chrome.action.setTitle({ tabId, title: res.ok ? `LinkScout：已記錄這個分頁 ${n} 篇 Reddit 貼文` : "LinkScout：本機接收器無法連線，尚未儲存" });
@@ -290,8 +315,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
   return true;
 });
-
-chrome.tabs?.onRemoved?.addListener((tabId) => redditCounts.delete(tabId));
 
 // Comments loaded on a Reddit post page (reddit.js). Saved quietly: the badge keeps
 // counting posts, and only turns to "!" when the receiver can't be reached.
