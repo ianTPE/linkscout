@@ -356,7 +356,8 @@ function background() {
     chrome: {
       storage: { sync: { get: async (defaults) => defaults },
         session: { set: async (value) => { session.push(value); }, remove: async () => {} } },
-      runtime: { onMessage: { addListener: (listener) => listeners.push(listener) } },
+      runtime: { onMessage: { addListener: (listener) => listeners.push(listener) }, onInstalled: { addListener() {} } },
+      contextMenus: { onClicked: { addListener() {} } },
       tabs: { onUpdated: { addListener() {} }, onRemoved: { addListener() {} } },
       permissions: { contains: async () => true },
       action: Object.fromEntries(["setBadgeText", "setBadgeBackgroundColor", "setTitle"].map((key) =>

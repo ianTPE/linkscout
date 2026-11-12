@@ -14,6 +14,7 @@ function startWorker(session) {
     runtime: { onMessage: listener(), onInstalled: listener() },
     tabs: { onUpdated: listener(), onRemoved: listener() },
     action: {},
+    contextMenus: { create() {}, removeAll() {}, onClicked: listener() },
     permissions: {},
     storage: {
       local: { get: async () => ({}), set: async () => {} },
@@ -50,4 +51,17 @@ test("Reddit posts re-sent with new scores are counted once", async () => {
   const w = startWorker(session);
   assert.equal(await w.addTabCount("reddit:3", ["t3_a", "t3_b"]), 2);
   assert.equal(await startWorker(session).addTabCount("reddit:3", ["t3_b", "t3_c"]), 3);
+});
+
+test("inbox items: the clicked link, else the page", () => {
+  const w = startWorker({});
+  const tab = { id: 1, title: " Some group | Facebook " };
+  const link = w.inboxItem({ linkUrl: "https://www.facebook.com/groups/x/posts/1/", pageUrl: "https://www.facebook.com/groups/x", selectionText: " useful bit " }, tab);
+  assert.equal(link.url, "https://www.facebook.com/groups/x/posts/1/");
+  assert.equal(link.page, "https://www.facebook.com/groups/x");
+  assert.equal(link.page_title, "Some group | Facebook");
+  assert.equal(link.text, "useful bit");
+  const page = w.inboxItem({ pageUrl: "https://example.com/a" }, tab);
+  assert.equal(page.url, "https://example.com/a");
+  assert.equal(page.text, null);
 });

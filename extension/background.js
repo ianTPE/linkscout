@@ -356,3 +356,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
   return true;
 });
+
+// ---------------------------------------------------------------------------
+// Inbox: right-click "LinkScout：存到收集箱" saves the page (or the link under the
+// cursor) and the selected text through the local receiver, which appends it to
+// ~/hn-daily/收集箱.md. One item per click, only what the person picked; works on any
+// site, including ones LinkScout never reads by itself (Facebook).
+
+const INBOX_URL = "http://localhost:8788/inbox";
+
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: "inbox", title: "LinkScout：存到收集箱", contexts: ["page", "selection", "link"] });
+  });
+});
+
+/** The item saved for a right-click: the link if one was clicked, else the page. */
+function inboxItem(info, tab) {
+  const text = (v, n) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
+  return {
+    url: text(info.linkUrl, 1000) ?? text(info.pageUrl, 1000), page: text(info.pageUrl, 1000),
+    page_title: text(tab?.title, 300), text: text(info.selectionText, 3000),
+  };
+}
+
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (info.menuItemId !== "inbox") return;
+  const item = inboxItem(info, tab);
+  const tabId = tab?.id;
+  let ok = false;
+  try {
+    const res = await fetch(INBOX_URL, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ page: item.page, items: [item] }), signal: AbortSignal.timeout(10_000),
+    });
+    ok = res.ok;
+  } catch {}
+  if (tabId == null) return;
+  const old = await chrome.action.getBadgeText({ tabId }).catch(() => "");
+  chrome.action.setBadgeText({ tabId, text: ok ? "✓" : "!" });
+  chrome.action.setBadgeBackgroundColor({ tabId, color: ok ? "#1f6f43" : "#a33a22" });
+  chrome.action.setTitle({ tabId, title: ok ? "LinkScout：已存到收集箱" : "LinkScout：本機接收器無法連線，沒有存到收集箱" });
+  if (ok) setTimeout(() => chrome.action.setBadgeText({ tabId, text: old }).catch(() => {}), 3000);
+});
