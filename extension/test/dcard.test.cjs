@@ -27,10 +27,20 @@ test("counts", () => {
   assert.equal(dcardCount("讚"), null);
 });
 
-function article({ href, title, time, buttons }) {
-  const el = (text, attrs = {}) => ({ textContent: text, getAttribute: (n) => attrs[n] ?? null });
-  const map = { 'a[href*="/p/"]': href ? el("18 小時", { href }) : null, h2: title == null ? null : el(title), time: time ? el(time, { datetime: time }) : null };
-  return { querySelector: (s) => map[s] ?? null, querySelectorAll: (s) => (s === "button" ? buttons.map((b) => el(b)) : []) };
+function article({ href, title, time, buttons, reaction }) {
+  const el = (text, attrs = {}) => ({ tagName: "BUTTON", textContent: text, getAttribute: (n) => attrs[n] ?? null });
+  const btns = buttons.map((b) => el(b));
+  // reaction: index of the likes button, wrapped in a div[aria-haspopup="dialog"] (forum pages).
+  let like = null;
+  if (reaction != null) {
+    like = btns[reaction];
+    like.parentElement = { nextElementSibling: btns[reaction + 1] };
+  }
+  const map = {
+    'a[href*="/p/"]': href ? el("18 小時", { href }) : null, h2: title == null ? null : el(title), time: time ? el(time, { datetime: time }) : null,
+    'div[aria-haspopup="dialog"] > button': like,
+  };
+  return { querySelector: (s) => map[s] ?? null, querySelectorAll: (s) => (s === "button" ? btns : []) };
 }
 
 test("post cards", () => {
@@ -39,4 +49,18 @@ test("post cards", () => {
     { id: "262426522", forum: "girl", title: "實用週邊分享", url: "https://www.dcard.tw/f/girl/p/262426522", created: "2026-11-09T14:08:07.487Z", likes: 6, comments: 5 });
   assert.equal(dcardRow(article({ href: "/f/girl", title: "t", time: null, buttons: [] }), base), null);
   assert.equal(dcardRow(article({ href: "/f/girl/p/1", title: "", time: null, buttons: [] }), base), null);
+});
+
+test("forum page cards: likes are in the reaction picker", () => {
+  // Button texts as saved from https://www.dcard.tw/f/3c (2026-11-13): menu, four poll
+  // options, ♡ 26, 💬 10, then repost, share, collect.
+  const base = "https://www.dcard.tw/f/3c";
+  const poll = dcardRow(article({ href: "/f/3c/p/1", title: "外接硬碟", time: null, buttons: ["", "ADATA SE880", "TEAMGROUP PD20", "Kingston XS2000", "Samsung T9", "26", "10", "2", "", "1"], reaction: 5 }), base);
+  assert.equal(poll.likes, 26);
+  assert.equal(poll.comments, 10);
+  const plain = dcardRow(article({ href: "/f/3c/p/2", title: "組電腦", time: null, buttons: ["", "", "3", "14", "4", "", "1"], reaction: 2 }), base);
+  assert.deepEqual([plain.likes, plain.comments], [3, 14]);
+  // No likes yet: the count is blank.
+  const none = dcardRow(article({ href: "/f/3c/p/3", title: "NAS", time: null, buttons: ["", "", "", "", "", "", "1"], reaction: 2 }), base);
+  assert.deepEqual([none.likes, none.comments], [0, 0]);
 });

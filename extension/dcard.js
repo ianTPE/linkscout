@@ -45,14 +45,19 @@ function dcardRow(article, base) {
   if (!m) return null;
   const title = article.querySelector("h2")?.textContent.trim();
   if (!title) return null;
-  // The first two buttons are ♡ likes and 💬 comments (then repost, share).
-  const buttons = [...article.querySelectorAll("button")];
+  // ♡ likes is the button inside the reaction picker (a div with aria-haspopup="dialog");
+  // 💬 comments is the button right after that div. On forum pages other buttons
+  // (menu, poll options, images) come first, so position alone is not enough.
+  // Fallback, as on search pages before: the first two buttons are likes and comments.
+  let like = article.querySelector('div[aria-haspopup="dialog"] > button');
+  let comment = like?.parentElement?.nextElementSibling;
+  if (!like || comment?.tagName !== "BUTTON") [like, comment] = article.querySelectorAll("button");
   return {
     id: m[2], forum: m[1], title,
     url: new URL(`/f/${m[1]}/p/${m[2]}`, base).href,
     created: article.querySelector("time")?.getAttribute("datetime") ?? null,
-    likes: buttons[0] ? dcardCount(buttons[0].textContent) : null,
-    comments: buttons[1] ? dcardCount(buttons[1].textContent) : null,
+    likes: like ? dcardCount(like.textContent) : null,
+    comments: comment ? dcardCount(comment.textContent) : null,
   };
 }
 
